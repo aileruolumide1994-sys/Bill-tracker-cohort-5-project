@@ -43,7 +43,6 @@
 
         <!-- Sidebar content -->
         <div class="offcanvas-body d-flex flex-column p-3">
-          <!-- Logo -->
           <a
             href="index.html"
             class="d-flex align-items-center gap-2 text-decoration-none text-dark border-bottom pb-3 mb-3"
@@ -117,7 +116,7 @@
               <span>Help &amp; Support</span>
             </a>
 
-            <div class="border-top pt-3 d-flex align-items-center gap-2">
+            <!-- <div class="border-top pt-3 d-flex align-items-center gap-2">
               <div class="profile-avatar">M</div>
 
               <div class="flex-grow-1">
@@ -126,7 +125,7 @@
               </div>
 
               <i class="bi bi-three-dots-vertical"></i>
-            </div>
+            </div> -->
           </div>
         </div>
       </aside>
@@ -137,10 +136,9 @@
         aria-live="polite"
         aria-atomic="true"
       ></div>
-      <!-- <button id="testSaveBtn" class="btn btn-primary">Test Save</button> -->
-      <!-- MAIN CONTENT AREA -->
+
+      <!-- Main Content -->
       <div class="main-content flex-grow-1">
-        <!-- TOP NAVBAR -->
         <nav class="navbar bg-white border-bottom px-3 py-2 sticky-top">
           <div class="container-fluid gap-2 p-0">
             <!-- Mobile menu button -->
@@ -154,6 +152,17 @@
             >
               <i class="bi bi-list fs-3"></i>
             </button>
+
+            <!-- button to create Team  -->
+            <!-- <button
+              type="button"
+              class="btn createTeamColor"
+              data-bs-toggle="modal"
+              data-bs-target="#createTeamModal"
+            >
+              <i class="bi bi-plus-lg"></i>
+              Create Team
+            </button> -->
 
             <!-- Team selector -->
             <div class="dropdown">
@@ -206,11 +215,69 @@
                 class="profile-avatar"
                 aria-label="User profile"
               >
-                <!-- user profile will come here later with js control  -->
+                <!-- user profile will come here later  -->
               </button>
             </div>
           </div>
         </nav>
+
+        <!-- Button that opens the Create Team form -->
+
+        <!-- Create Team modal -->
+        <div
+          class="modal fade"
+          id="createTeamModal"
+          tabindex="-1"
+          aria-labelledby="createTeamTitle"
+          aria-hidden="true"
+        >
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <form id="createTeamForm">
+                <div class="modal-header">
+                  <h5 class="modal-title" id="createTeamTitle">
+                    Create a Team
+                  </h5>
+
+                  <button
+                    type="button"
+                    class="btn-close"
+                    data-bs-dismiss="modal"
+                    aria-label="Close"
+                  ></button>
+                </div>
+
+                <div class="modal-body">
+                  <label for="teamName" class="form-label"> Team Name </label>
+
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="teamName"
+                    name="teamName"
+                    placeholder="e.g. Marketing Team"
+                    required
+                    maxlength="60"
+                  />
+                </div>
+
+                <div class="modal-footer">
+                  <button
+                    type="button"
+                    class="btn btn-light"
+                    data-bs-dismiss="modal"
+                  >
+                    Cancel
+                  </button>
+
+                  <button type="submit" class="btn btn-primary">
+                    Create Team
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
 
         <!-- PAGE CONTENT -->
         <main
@@ -433,6 +500,11 @@
                 <button type="button" id="adjustRulesBtn">Adjust Rules</button>
               </div>
             </section>
+          </div>
+
+          <!-- Activity Log  -->
+          <div class="activity-log">
+            <p>Recent Activity</p>
           </div>
         </section>
       </div>

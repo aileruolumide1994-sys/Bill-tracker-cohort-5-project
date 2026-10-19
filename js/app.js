@@ -1,17 +1,38 @@
+const teamSelector = document.getElementById("teamSelector");
+const teamList = document.getElementById("teamList");
+const testSaveBtn = document.getElementById("testSaveBtn");
+const monthElement = document.getElementById("currentMonth");
+const greetingMessage = document.getElementById("greetingMessage");
+
+// GREETING MESSAGE
+function userGreeting(userName) {
+  const hour = new Date().getHours();
+  let greetings = "";
+
+  if (hour > 1 && hour < 12) {
+    greetings = `Good morning, ${userName}`;
+  } else if (hour >= 12 && hour < 17) {
+    greetings = `Good Afternoon, ${userName}`;
+  } else {
+    greetings = `Good Evening, ${userName}`;
+  }
+  return greetings;
+}
+
+window.onload = function () {
+  const user = "Marvellous";
+  greetingMessage.innerText = userGreeting(user);
+};
+
 import { loadData, saveData } from "./core/storage.js";
 import { showNotification } from "./utils/notification.js";
 
 let appData = loadData();
 
-const teamSelector = document.getElementById("teamSelector");
-const teamList = document.getElementById("teamList");
-
 function renderTeams() {
   teamList.innerHTML = "";
-
   if (appData.teams.length === 0) {
     teamSelector.textContent = "No teams yet";
-
     teamList.innerHTML = `
             <li>
                 <span class="dropdown-item-text">
@@ -19,9 +40,20 @@ function renderTeams() {
                 </span>
             </li>
         `;
-
     return;
   }
+
+  teamList.innerHTML = `
+  <button
+              type="button"
+              class="btn createTeamColor"
+              data-bs-toggle="modal"
+              data-bs-target="#createTeamModal"
+            >
+              <i class="bi bi-plus-lg"></i>
+              Create Team
+            </button>
+  `;
 
   let activeTeam = appData.teams.find(
     (team) => team.id === appData.settings.activeTeamId,
@@ -62,7 +94,6 @@ function renderTeams() {
 function renderDashboard() {
   console.log("Selected team:", appData.settings.activeTeamId);
 }
-
 renderTeams();
 
 function saveApplicationData(data) {
@@ -75,8 +106,6 @@ function saveApplicationData(data) {
   }
 }
 
-const testSaveBtn = document.getElementById("testSaveBtn");
-
 if (testSaveBtn) {
   testSaveBtn.addEventListener("click", () => {
     saveApplicationData(appData);
@@ -84,8 +113,6 @@ if (testSaveBtn) {
 }
 
 function renderCurrentMonth() {
-  const monthElement = document.getElementById("currentMonth");
-
   if (!monthElement) return;
 
   const currentDate = new Date();
@@ -98,7 +125,7 @@ function renderCurrentMonth() {
 
 renderCurrentMonth();
 
-/* Format amounts as Nigerian Naira */
+/* Formating amounts as Nigerian Naira */
 function formatMoney(amount) {
   return new Intl.NumberFormat("en-NG", {
     style: "currency",
@@ -107,7 +134,6 @@ function formatMoney(amount) {
   }).format(amount || 0);
 }
 
-/* Get the current month and year */
 function getCurrentMonth() {
   return new Date().toLocaleDateString("en-US", {
     month: "short",
@@ -395,3 +421,59 @@ function renderMemberChart() {
 renderDashboardSummary();
 renderSpendingChart();
 renderMemberChart();
+
+const createTeamForm = document.getElementById("createTeamForm");
+
+createTeamForm.addEventListener("submit", function (event) {
+  // Stop the browser from refreshing the page
+  event.preventDefault();
+
+  // Get the team name entered by the user
+  const teamNameInput = document.getElementById("teamName");
+  const teamName = teamNameInput.value.trim();
+
+  // Don't allow an empty team name
+  if (!teamName) {
+    showNotification("Please enter a team name.", "warning");
+    return;
+  }
+
+  // Create the new team object
+  const newTeam = {
+    id: crypto.randomUUID(),
+    name: teamName,
+  };
+
+  // Add the team to our existing data
+  appData.teams.push(newTeam);
+
+  // Make the new team the active team
+  appData.settings.activeTeamId = newTeam.id;
+
+  try {
+    // Save all application data to localStorage
+    saveData(appData);
+
+    // Update the team dropdown
+    renderTeams();
+
+    // Refresh dashboard figures if this function exists
+    renderDashboard();
+
+    // Clear the form
+    createTeamForm.reset();
+
+    // Close the modal
+    const modalElement = document.getElementById("createTeamModal");
+    const modal = bootstrap.Modal.getInstance(modalElement);
+    modal.hide();
+
+    showNotification("Team created successfully!", "success");
+  } catch (error) {
+    // Undo the in-memory changes if saving fails
+    appData.teams.pop();
+    appData.settings.activeTeamId = null;
+
+    showNotification(error.message || "Could not save the new team.", "danger");
+  }
+});
