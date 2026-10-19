@@ -740,3 +740,34 @@ body {
   font-size: 13px;
   font-weight: 600;
 }
+
+/* Activity history page */
+.card-main {
+  max-width: 1000px;
+  width: 100%;
+  min-height: 550px;
+}
+.bg-light-blue {
+  background-color: #dbeafe !important;
+}
+.text-custom-blue {
+  color: #1e3a8a !important;
+}
+.filter-control {
+  color: #1e3a8a;
+  border-color: #bfdbfe;
+}
+.filter-control::placeholder {
+  color: #93c5fd;
+}
+.filter-control:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 0.25rem rgba(37, 99, 235, 0.25);
+}
+.empty-state-box {
+  border: 1px solid #e5e7eb;
+}
+.icon-large {
+  font-size: 3rem;
+  color: #9ca3af;
+}
