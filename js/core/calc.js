@@ -1,67 +1,161 @@
-// Pure money logic (no DOM) — easy to test.
+// All the money maths lives here. It never touches the page (no DOM),
+// which makes it easy to understand and test.
 import { formatMoney } from "../utils/format.js";
 
-// Split `total` (whole kobo) by weights. Leftover kobo go to the biggest remainders,
-// so the shares ALWAYS add up exactly to the total.
+// Split `total` kobo between people according to `weights`.
+// Example: allocate(100, [1, 1, 1]) -> [34, 33, 33]
+// Dividing can leave leftover kobo, so we hand them out one at a time
+// to whoever had the biggest remainder. The parts always add up to the total.
 export function allocate(total, weights) {
-  const sum = weights.reduce((a, b) => a + b, 0);
-  if (!sum) return weights.map(() => 0);
-  const parts = weights.map((w, i) => {
-    const x = (total * w) / sum;
-    return { i, floor: Math.floor(x), rest: x - Math.floor(x) };
+  let weightSum = 0;
+  for (const weight of weights) {
+    weightSum = weightSum + weight;
+  }
+  if (weightSum === 0) {
+    return weights.map(function () { return 0; });
+  }
+
+  // Step 1: give everyone their share rounded DOWN
+  const parts = [];
+  let given = 0;
+  for (let i = 0; i < weights.length; i++) {
+    const exactShare = (total * weights[i]) / weightSum;
+    const rounded = Math.floor(exactShare);
+    parts.push({ index: i, amount: rounded, remainder: exactShare - rounded });
+    given = given + rounded;
+  }
+
+  // Step 2: hand out leftover kobo, biggest remainder first
+  let leftover = total - given;
+  const byRemainder = parts.slice().sort(function (a, b) {
+    return b.remainder - a.remainder;
   });
-  let left = total - parts.reduce((s, p) => s + p.floor, 0);
-  [...parts].sort((a, b) => b.rest - a.rest).forEach((p) => { if (left > 0) { p.floor++; left--; } });
-  return parts.map((p) => p.floor);
+  for (const part of byRemainder) {
+    if (leftover > 0) {
+      part.amount = part.amount + 1;
+      leftover = leftover - 1;
+    }
+  }
+
+  return parts.map(function (part) { return part.amount; });
 }
 
-// split: "equal" | "exact" (amounts in the expense currency) | "percent"
+// Work out how much each person owes for one expense.
+// split is "equal", "exact" (amounts) or "percent".
+// Returns { shares: { memberId: kobo } } or { error: "message" }
 export function splitExpense({ split, totalKobo, original, currency, ids, raw }) {
-  if (!ids.length) return { error: "Select at least one member to share this." };
-  let weights = ids.map(() => 1);
+  if (ids.length === 0) {
+    return { error: "Select at least one member to share this." };
+  }
+
+  // Equal split: everyone gets weight 1
+  let weights = ids.map(function () { return 1; });
+
   if (split !== "equal") {
-    weights = ids.map((id) => parseFloat(raw[id]) || 0);
-    const sum = weights.reduce((a, b) => a + b, 0);
-    if (weights.some((w) => w < 0)) return { error: "Values cannot be negative." };
-    if (split === "exact" && Math.round(sum * 100) !== Math.round(original * 100))
-      return { error: `Exact amounts total ${formatMoney(sum * 100, currency)} but must equal ${formatMoney(original * 100, currency)}.` };
-    if (split === "percent" && Math.abs(sum - 100) > 1e-6)
-      return { error: `Percentages total ${+sum.toFixed(4)}% but must equal 100%.` };
+    // Read what the user typed for each person
+    weights = ids.map(function (id) {
+      return parseFloat(raw[id]) || 0;
+    });
+
+    let sum = 0;
+    for (const weight of weights) {
+      if (weight < 0) return { error: "Values cannot be negative." };
+      sum = sum + weight;
+    }
+
+    if (split === "exact" && Math.round(sum * 100) !== Math.round(original * 100)) {
+      return {
+        error:
+          "Exact amounts total " + formatMoney(sum * 100, currency) +
+          " but must equal " + formatMoney(original * 100, currency) + ".",
+      };
+    }
+    if (split === "percent" && Math.abs(sum - 100) > 0.000001) {
+      return { error: "Percentages total " + sum.toFixed(2) + "% but must equal 100%." };
+    }
   }
+
   const amounts = allocate(totalKobo, weights);
-  return { shares: Object.fromEntries(ids.map((id, i) => [id, amounts[i]])) };
+  const shares = {};
+  for (let i = 0; i < ids.length; i++) {
+    shares[ids[i]] = amounts[i];
+  }
+  return { shares: shares };
 }
 
-// net > 0: the team owes them money. net < 0: they owe the team.
-// Only APPROVED expenses count (pending / rejected claims don't move balances).
+// Work out each member's balance.
+//   net > 0  -> the team owes them money
+//   net < 0  -> they owe the team money
+// Only APPROVED expenses count.
 export function calculateBalances(members, expenses, payments) {
-  const b = {};
-  const row = (id) => (b[id] ??= { paid: 0, share: 0, settled: 0, net: 0 });
-  members.forEach((m) => row(m.id));
-  expenses.filter((e) => e.status === "approved").forEach((e) => {
-    row(e.payerId).paid += e.amount;
-    for (const id in e.shares) row(id).share += e.shares[id];
-  });
-  payments.forEach((p) => { row(p.from).settled += p.amount; row(p.to).settled -= p.amount; });
-  for (const id in b) b[id].net = b[id].paid - b[id].share + b[id].settled;
-  return b;
+  const balances = {};
+
+  // Make sure a person has a balance row, then return it
+  function getRow(id) {
+    if (!balances[id]) {
+      balances[id] = { paid: 0, share: 0, settled: 0, net: 0 };
+    }
+    return balances[id];
+  }
+
+  for (const member of members) {
+    getRow(member.id);
+  }
+
+  for (const expense of expenses) {
+    if (expense.status !== "approved") continue; // skip pending/rejected
+
+    getRow(expense.payerId).paid += expense.amount;
+    for (const id in expense.shares) {
+      getRow(id).share += expense.shares[id];
+    }
+  }
+
+  for (const payment of payments) {
+    getRow(payment.from).settled += payment.amount;
+    getRow(payment.to).settled -= payment.amount;
+  }
+
+  for (const id in balances) {
+    const row = balances[id];
+    row.net = row.paid - row.share + row.settled;
+  }
+
+  return balances;
 }
 
-// Match the biggest debtor with the biggest creditor until everyone is at zero.
+// Suggest who should pay whom so everyone ends at zero.
+// Idea: repeatedly match the biggest debtor with the biggest creditor.
 export function createSettlementPlan(balances) {
-  const credit = [], debt = [], plan = [];
+  const creditors = []; // people owed money: { id, amount }
+  const debtors = [];   // people who owe money: { id, amount }
+  const plan = [];
+
   for (const id in balances) {
-    if (balances[id].net > 0) credit.push([id, balances[id].net]);
-    else if (balances[id].net < 0) debt.push([id, -balances[id].net]);
+    const net = balances[id].net;
+    if (net > 0) creditors.push({ id: id, amount: net });
+    if (net < 0) debtors.push({ id: id, amount: -net });
   }
-  while (credit.length && debt.length) {
-    credit.sort((a, b) => b[1] - a[1]);
-    debt.sort((a, b) => b[1] - a[1]);
-    const amount = Math.min(credit[0][1], debt[0][1]);
-    plan.push({ from: debt[0][0], to: credit[0][0], amount });
-    credit[0][1] -= amount; debt[0][1] -= amount;
-    if (!credit[0][1]) credit.shift();
-    if (!debt[0][1]) debt.shift();
+
+  const biggestFirst = function (a, b) { return b.amount - a.amount; };
+
+  while (creditors.length > 0 && debtors.length > 0) {
+    creditors.sort(biggestFirst);
+    debtors.sort(biggestFirst);
+
+    const creditor = creditors[0];
+    const debtor = debtors[0];
+    const amount = Math.min(creditor.amount, debtor.amount);
+
+    plan.push({ from: debtor.id, to: creditor.id, amount: amount });
+
+    creditor.amount -= amount;
+    debtor.amount -= amount;
+
+    // Anyone who reached zero is finished - remove them
+    if (creditor.amount === 0) creditors.shift();
+    if (debtor.amount === 0) debtors.shift();
   }
+
   return plan;
 }
