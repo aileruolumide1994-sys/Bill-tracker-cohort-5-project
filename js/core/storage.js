@@ -9,7 +9,7 @@ export function createInitialData() {
     recurringBills: [],
     activities: [],
     settings: {
-      userName: "",
+      userName: "Marvellous",
       userRole: "Admin",
       activeTeamId: null,
     },
@@ -50,8 +50,8 @@ export function loadData() {
 
 export function saveData(data) {
   try {
-    localStorage.setItem("officeflow_data", JSON.stringify(data));
-  } catch (error) {
+    localStorage.setItem(DATA_KEY, JSON.stringify(data));
+  } catch {
     throw new Error(
       "We couldn't save your changes. Check your browser storage and try again.",
     );

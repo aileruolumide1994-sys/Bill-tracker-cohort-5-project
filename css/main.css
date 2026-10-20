@@ -378,14 +378,14 @@ body {
   min-width: 0;
 }
 
-.audit-message h6 {
+.audit-message .audit-title {
   margin: 0 0 4px;
   font-size: 12px;
   font-weight: 700;
   color: #065f46;
 }
 
-.audit-message h6 span {
+.audit-message .audit-title span {
   color: var(--accent-color);
 }
 
