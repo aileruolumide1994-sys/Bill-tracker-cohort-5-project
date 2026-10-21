@@ -1,0 +1,134 @@
+/* Shared styles for the pages rendered by js/pages/*.js and js/features/*.js */
+
+/* Page heading row */
+.page-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+/* White content card */
+.panel {
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+/* List rows (expenses, payments, members, settle-up, recent activity) */
+.row-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.row-item:first-child {
+  padding-top: 0;
+}
+
+.row-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.row-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--primary-light);
+  color: var(--primary-color);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Empty state used inside panels */
+.empty-state {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.empty-state > i {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 2.5rem;
+}
+
+.empty-state > p {
+  margin-bottom: 16px;
+}
+
+/* Primary (navy) button */
+.btn-navy {
+  --bs-btn-color: var(--text-on-primary);
+  --bs-btn-bg: var(--primary-color);
+  --bs-btn-border-color: var(--primary-color);
+  --bs-btn-hover-color: var(--text-on-primary);
+  --bs-btn-hover-bg: var(--primary-hover);
+  --bs-btn-hover-border-color: var(--primary-hover);
+  --bs-btn-active-color: var(--text-on-primary);
+  --bs-btn-active-bg: var(--primary-hover);
+  --bs-btn-active-border-color: var(--primary-hover);
+  --bs-btn-disabled-color: var(--text-on-primary);
+  --bs-btn-disabled-bg: var(--primary-color);
+  --bs-btn-disabled-border-color: var(--primary-color);
+}
+
+/* Balance badges and coloured amounts */
+.badge-pos {
+  background: var(--success-bg);
+  color: var(--success-color);
+}
+
+.badge-neg {
+  background: var(--danger-bg);
+  color: var(--danger-color);
+}
+
+.badge-zero {
+  background: #f1f5f9;
+  color: var(--text-secondary);
+}
+
+.pos {
+  color: var(--success-color);
+}
+
+.neg {
+  color: var(--danger-color);
+}
+
+/* Pop-up notifications (js/utils/notification.js) */
+#notificationArea {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2000;
+  width: min(360px, calc(100vw - 32px));
+}
+
+/* Recent activity heading on the overview */
+.activity-log h2 {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.activity-log .row-item {
+  justify-content: space-between;
+}

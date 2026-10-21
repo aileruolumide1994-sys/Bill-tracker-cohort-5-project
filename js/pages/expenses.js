@@ -1,51 +1,70 @@
 // Expenses & Claims page
-import { state, commit, getTeam, membersOf, expensesOf, logActivity } from "../core/state.js";
-import { initPage, heading, onAction, renderNoTeam, refresh } from "../core/shell.js";
+import {
+  state,
+  commit,
+  getTeam,
+  membersOf,
+  expensesOf,
+  logActivity,
+} from "../core/state.js";
+import {
+  initPage,
+  heading,
+  onAction,
+  renderNoTeam,
+  refresh,
+} from "../core/shell.js";
 import { openExpenseForm, CATEGORIES } from "../features/forms.js";
 import { confirmDialog } from "../utils/modal.js";
-import { escapeHtml, formatMoney, formatDate, monthOf, monthLabel } from "../utils/format.js";
+import {
+  escapeHtml,
+  formatMoney,
+  formatDate,
+  monthOf,
+  monthLabel,
+} from "../utils/format.js";
 
 const pageContent = document.getElementById("pageContent");
-
-// The current filter choices ("" means "no filter")
 const filters = {
-  q: new URLSearchParams(location.search).get("q") || "",
+  q: new URLSearchParams(location.search).get("q") ?? "",
   member: "",
   category: "",
   month: "",
   status: "",
 };
 
-// The little coloured label for claims, e.g. "Claim · pending"
 function claimBadge(expense) {
   if (expense.kind !== "claim") return "";
 
-  let colour = "text-bg-warning";
-  if (expense.status === "approved") colour = "badge-pos";
-  if (expense.status === "rejected") colour = "badge-neg";
+  let className = "text-bg-warning";
+  if (expense.status === "approved") className = "badge-pos";
+  if (expense.status === "rejected") className = "badge-neg";
 
-  return `<span class="badge ${colour}">Claim · ${expense.status}</span>`;
+  return `<span class="badge ${className}">Claim · ${expense.status}</span>`;
 }
 
-// Approve / Reject buttons (only shown when they make sense)
 function reviewButtons(expense) {
-  const approve = `<button class="btn btn-sm btn-link p-0" data-action="approve" data-id="${expense.id}">Approve</button> `;
-  const reject = `<button class="btn btn-sm btn-link text-danger p-0" data-action="reject" data-id="${expense.id}">Reject</button> `;
+  if (expense.status === "pending") {
+    return `
+      <button class="btn btn-sm btn-link p-0" data-action="approve" data-id="${expense.id}">Approve</button>
+      <button class="btn btn-sm btn-link text-danger p-0" data-action="reject" data-id="${expense.id}">Reject</button>
+    `;
+  }
 
-  if (expense.status === "pending") return approve + reject;
-  if (expense.status === "rejected") return approve;
+  if (expense.status === "rejected") {
+    return `<button class="btn btn-sm btn-link p-0" data-action="approve" data-id="${expense.id}">Approve</button>`;
+  }
+
   return "";
 }
 
-// HTML for one expense in the list
 function expenseRowHtml(expense, names) {
   const payerName = names[expense.payerId] || "Unknown";
   const paidWord = expense.kind === "claim" ? "Claimed" : "Paid";
-
-  let foreign = "";
-  if (expense.currency !== "NGN") {
-    foreign = " · " + formatMoney(expense.originalAmount * 100, expense.currency);
-  }
+  const foreign =
+    expense.currency !== "NGN"
+      ? ` · ${formatMoney(expense.originalAmount * 100, expense.currency)}`
+      : "";
 
   return `
     <div class="row-item">
@@ -65,7 +84,6 @@ function expenseRowHtml(expense, names) {
     </div>`;
 }
 
-// Does this expense pass all the current filters?
 function matchesFilters(expense) {
   const search = filters.q.toLowerCase();
 
@@ -74,6 +92,7 @@ function matchesFilters(expense) {
     const hasShare = expense.shares[filters.member] !== undefined;
     if (!isPayer && !hasShare) return false;
   }
+
   if (filters.category && expense.category !== filters.category) return false;
   if (filters.month && monthOf(expense.date) !== filters.month) return false;
   if (filters.status && expense.status !== filters.status) return false;
@@ -82,20 +101,26 @@ function matchesFilters(expense) {
   return true;
 }
 
-// One filter dropdown. options is a list of [value, label] pairs.
 function filterSelect(key, allLabel, options) {
-  let optionTags = `<option value="">${allLabel}</option>`;
-  for (const option of options) {
-    const selected = filters[key] === option[0] ? "selected" : "";
-    optionTags += `<option value="${escapeHtml(option[0])}" ${selected}>${escapeHtml(option[1])}</option>`;
-  }
-  return `<div class="col-6 col-md-3">
-            <select class="form-select form-select-sm" data-filter="${key}" aria-label="${allLabel}">${optionTags}</select>
-          </div>`;
+  const optionTags = options
+    .map(([value, label]) => {
+      const selected = filters[key] === value ? "selected" : "";
+      return `<option value="${escapeHtml(value)}" ${selected}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+
+  return `
+    <div class="col-6 col-md-3">
+      <select class="form-select form-select-sm" data-filter="${key}" aria-label="${allLabel}">
+        <option value="">${allLabel}</option>
+        ${optionTags}
+      </select>
+    </div>`;
 }
 
 function render() {
   const team = getTeam();
+
   if (!team) {
     renderNoTeam(pageContent);
     return;
@@ -108,33 +133,29 @@ function render() {
   }
 
   const allExpenses = expensesOf(team);
+  const shown = allExpenses
+    .filter(matchesFilters)
+    .sort((a, b) => b.date.localeCompare(a.date));
 
-  // Apply filters, newest first
-  const shown = allExpenses.filter(matchesFilters);
-  shown.sort(function (a, b) {
-    return b.date.localeCompare(a.date);
-  });
+  const months = [...new Set(allExpenses.map((expense) => monthOf(expense.date)))]
+    .sort()
+    .reverse();
 
-  // The list of months that have expenses (newest first, no repeats)
-  const months = [];
-  for (const expense of allExpenses) {
-    const month = monthOf(expense.date);
-    if (!months.includes(month)) months.push(month);
-  }
-  months.sort().reverse();
+  const memberOptions = members.map((member) => [member.id, member.name]);
+  const categoryOptions = CATEGORIES.map((category) => [category, category]);
+  const monthOptions = months.map((month) => [month, monthLabel(month)]);
+  const statusOptions = [
+    ["approved", "Approved"],
+    ["pending", "Pending"],
+    ["rejected", "Rejected"],
+  ];
 
-  // Build the dropdown option lists
-  const memberOptions = members.map(function (m) { return [m.id, m.name]; });
-  const categoryOptions = CATEGORIES.map(function (c) { return [c, c]; });
-  const monthOptions = months.map(function (m) { return [m, monthLabel(m)]; });
-  const statusOptions = [["approved", "Approved"], ["pending", "Pending"], ["rejected", "Rejected"]];
-
-  // The list of expenses (or a message if there are none)
   let listHtml = "";
   if (shown.length === 0) {
-    const message = allExpenses.length > 0
-      ? "No expenses match these filters."
-      : "No expenses yet. Add the first claim or bill for this team.";
+    const message =
+      allExpenses.length > 0
+        ? "No expenses match these filters."
+        : "No expenses yet. Add the first claim or bill for this team.";
     listHtml = `<div class="empty-state"><i class="bi bi-receipt"></i>${message}</div>`;
   } else {
     for (const expense of shown) {
@@ -143,64 +164,57 @@ function render() {
   }
 
   pageContent.innerHTML =
-    heading("Expenses & claims", `<button class="btn btn-navy" data-action="add"><i class="bi bi-plus-lg"></i> Add expense or claim</button>`) +
+    heading(
+      "Expenses & claims",
+      `<button class="btn btn-navy" data-action="add"><i class="bi bi-plus-lg"></i> Add expense or claim</button>`,
+    ) +
     `<div class="panel">
-       <div class="row g-2">
-         ${filterSelect("member", "All members", memberOptions)}
-         ${filterSelect("category", "All categories", categoryOptions)}
-         ${filterSelect("month", "All months", monthOptions)}
-         ${filterSelect("status", "Any status", statusOptions)}
-       </div>
-     </div>
-     <div class="panel">${listHtml}</div>`;
+      <div class="row g-2">
+        ${filterSelect("member", "All members", memberOptions)}
+        ${filterSelect("category", "All categories", categoryOptions)}
+        ${filterSelect("month", "All months", monthOptions)}
+        ${filterSelect("status", "Any status", statusOptions)}
+      </div>
+    </div>
+    <div class="panel">${listHtml}</div>`;
 }
 
-// Approve or reject a claim
 function setStatus(id, status) {
-  const expense = state.data.expenses.find(function (e) { return e.id === id; });
+  const expense = state.data.expenses.find((item) => item.id === id);
+  if (!expense) return;
+
   expense.status = status;
-  logActivity(getTeam(), "Claim “" + expense.title + "” " + status);
+  logActivity(getTeam(), `Claim “${expense.title}” ${status}`);
   commit();
   refresh();
 }
 
 onAction(pageContent, {
-  add: function () {
-    openExpenseForm();
-  },
-  edit: function (data) {
-    openExpenseForm(data.id);
-  },
-  approve: function (data) {
-    setStatus(data.id, "approved");
-  },
-  reject: function (data) {
-    setStatus(data.id, "rejected");
-  },
-  delete: function (data) {
-    confirmDialog("Delete this expense? Balances will update.", function () {
-      state.data.expenses = state.data.expenses.filter(function (e) {
-        return e.id !== data.id;
-      });
+  add: () => openExpenseForm(),
+  edit: ({ id }) => openExpenseForm(id),
+  approve: ({ id }) => setStatus(id, "approved"),
+  reject: ({ id }) => setStatus(id, "rejected"),
+  delete: ({ id }) => {
+    confirmDialog("Delete this expense? Balances will update.", () => {
+      state.data.expenses = state.data.expenses.filter((expense) => expense.id !== id);
       commit();
       refresh();
     });
   },
 });
 
-// When a filter dropdown changes, remember the choice and redraw
-pageContent.addEventListener("change", function (event) {
+pageContent.addEventListener("change", (event) => {
   const key = event.target.dataset.filter;
-  if (key) {
-    filters[key] = event.target.value;
-    render();
-  }
+  if (!key) return;
+
+  filters[key] = event.target.value;
+  render();
 });
 
 initPage({
   onRender: render,
-  onSearch: function (text) {
-    filters.q = text;
+  onSearch: (q) => {
+    filters.q = q;
     render();
   },
 });
