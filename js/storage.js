@@ -36,7 +36,6 @@ function loadData() {
       throw new Error("Invalid OfficeFlow data.");
     }
 
-    // Support data created before we added these properties.
     data.recurringBills ??= [];
     data.activities ??= [];
     data.settings ??= createInitialData().settings;

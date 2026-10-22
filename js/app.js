@@ -1,4 +1,3 @@
-// CATEGORIES
 const CATEGORIES = [
   "Stationery",
   "Internet",
@@ -24,22 +23,16 @@ const CHART_COLORS = [
 const RATES_KEY = "officeflow_rates";
 const RATES_URL = "https://open.er-api.com/v6/latest/NGN";
 
-// Pages live inside /pages/, the home page does not, so links start differently
 const pagesPath = location.pathname.includes("/pages/") ? "" : "pages/";
 
-// A shortcut so we don't type document.getElementById every time
 function getEl(id) {
   return document.getElementById(id);
 }
 
-// A shortcut to change the text of an element
 function setText(id, text) {
   getEl(id).textContent = text;
 }
 
-// ---------- 2. HELPER FUNCTIONS (money, dates, text) ----------
-
-// Money is saved in kobo (1 naira = 100 kobo) so we never get decimal bugs
 function formatMoney(kobo, currency = "NGN") {
   const formatter = new Intl.NumberFormat("en-NG", {
     style: "currency",
@@ -53,7 +46,6 @@ function createId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-// Stops typed text from being treated as HTML
 function escapeHtml(text) {
   let result = String(text === null || text === undefined ? "" : text);
   result = result.replaceAll("&", "&amp;");
@@ -71,12 +63,10 @@ function today() {
   return now.getFullYear() + "-" + month + "-" + day;
 }
 
-// "2026-10-22" -> "2026-10"
 function monthOf(date) {
   return date.slice(0, 7);
 }
 
-// "2026-10" -> "October 2026"
 function monthLabel(month) {
   return new Date(month + "-01T00:00").toLocaleDateString("en-US", {
     month: "long",
@@ -84,7 +74,6 @@ function monthLabel(month) {
   });
 }
 
-// "2026-10-22" -> "22 Oct 2026"
 function formatDate(date) {
   return new Date(date + "T00:00").toLocaleDateString("en-NG", {
     day: "numeric",
@@ -93,7 +82,6 @@ function formatDate(date) {
   });
 }
 
-// "Ada Lovelace" -> "AL"
 function initials(name) {
   const words = name.split(/\s+/);
   let letters = "";
@@ -103,7 +91,6 @@ function initials(name) {
   return letters.slice(0, 2).toUpperCase();
 }
 
-// Add up the amount of a list of expenses
 function sumAmounts(list) {
   let total = 0;
   for (const item of list) {
@@ -112,7 +99,6 @@ function sumAmounts(list) {
   return total;
 }
 
-// Turn a list of names into a lookup: { id: name }
 function makeNameLookup(members) {
   const names = {};
   for (const member of members) {
@@ -121,9 +107,6 @@ function makeNameLookup(members) {
   return names;
 }
 
-// ---------- 3. DATA (state) ----------
-
-// Load saved data. If it is broken, keep a backup copy and start fresh.
 function safeLoad() {
   try {
     return loadData();
@@ -136,10 +119,8 @@ function safeLoad() {
   }
 }
 
-// state.data holds teams, members, expenses, payments, activities, settings
 const state = { data: safeLoad() };
 
-// Save state.data to localStorage
 function commit() {
   try {
     saveData(state.data);
@@ -148,7 +129,6 @@ function commit() {
   }
 }
 
-// The team the user is looking at (or null if there are no teams)
 function getTeam() {
   let team = state.data.teams.find(
     (t) => t.id === state.data.settings.activeTeamId,
@@ -163,7 +143,6 @@ function setTeam(id) {
   commit();
 }
 
-// Members of a team. Archived members are hidden unless includeArchived is true
 function membersOf(team, includeArchived = false) {
   return state.data.members.filter(
     (m) => m.teamId === team.id && (includeArchived || m.active !== false),
@@ -178,7 +157,6 @@ function paymentsOf(team) {
   return state.data.payments.filter((p) => p.teamId === team.id);
 }
 
-// Add a line to "Recent activity" (newest first, we keep only 200)
 function logActivity(team, text) {
   state.data.activities.unshift({
     id: createId(),
@@ -189,7 +167,6 @@ function logActivity(team, text) {
   if (state.data.activities.length > 200) state.data.activities.length = 200;
 }
 
-//  MONEY CALCULATIONS
 function allocate(total, weights) {
   let weightSum = 0;
   for (const weight of weights) {
@@ -197,7 +174,6 @@ function allocate(total, weights) {
   }
   if (weightSum === 0) return weights.map(() => 0);
 
-  // Everyone gets their share rounded DOWN
   const parts = [];
   let given = 0;
   for (let i = 0; i < weights.length; i++) {
@@ -207,28 +183,9 @@ function allocate(total, weights) {
     given = given + rounded;
   }
 
-  // Give the leftover kobo, one by one, to the biggest remainders
-  // let leftover = total - given;
-  // const sorted = parts.slice().sort((a, b) => b.remainder - a.remainder);
-  // for (const part of sorted) {
-  //   if (leftover > 0) {
-  //     part.amount = part.amount + 1;
-  //     leftover = leftover - 1;
-  //   }
-  // }
-
-  // const sorted = parts.slice().sort((a, b) => {
-  //   if (b.remainder === a.remainder) {
-  //     return Math.random() - 0.5;
-  //   }
-  //   return b.remainder - a.remainder;
-  // });
 
   let leftover = total - given;
-
-  // Create a safe copy to sort so we don't mess up the original array order
   const sorted = parts.slice().sort((a, b) => {
-    // If the remainders are exactly equal, flip a coin to decide who gets it
     if (b.remainder === a.remainder) {
       return Math.random() - 0.5;
     }
@@ -244,14 +201,11 @@ function allocate(total, weights) {
   return parts.map((part) => part.amount);
 }
 
-// How much does each person owe for ONE expense?
-// split is "equal", "exact" or "percent"
-// Returns { shares: { memberId: kobo } } or { error: "message" }
 function splitExpense(split, totalKobo, original, currency, ids, raw) {
   if (ids.length === 0)
     return { error: "Select at least one member to share this." };
 
-  let weights = ids.map(() => 1); // equal split: everyone has weight 1
+  let weights = ids.map(() => 1); 
   if (split !== "equal") {
     weights = ids.map((id) => parseFloat(raw[id]) || 0);
     let sum = 0;
@@ -287,12 +241,8 @@ function splitExpense(split, totalKobo, original, currency, ids, raw) {
   return { shares: shares };
 }
 
-// Work out each member's balance. Only APPROVED expenses count.
-// net > 0: the team owes them.  net < 0: they owe the team.
 function calculateBalances(members, expenses, payments) {
   const balances = {};
-
-  // Make sure a person has a row, then return it
   function getRow(id) {
     if (!balances[id]) balances[id] = { paid: 0, share: 0, settled: 0, net: 0 };
     return balances[id];
@@ -327,11 +277,9 @@ function teamBalances(team) {
   );
 }
 
-// Who should pay whom so everyone ends at zero?
-// Idea: match the biggest debtor with the biggest creditor, again and again.
 function createSettlementPlan(balances) {
-  const creditors = []; // people who are owed money
-  const debtors = []; // people who owe money
+  const creditors = []; 
+  const debtors = []; 
   const plan = [];
 
   for (const id in balances) {
@@ -351,24 +299,23 @@ function createSettlementPlan(balances) {
     creditor.amount -= amount;
     debtor.amount -= amount;
 
-    if (creditor.amount === 0) creditors.shift(); // finished, remove
+    if (creditor.amount === 0) creditors.shift(); 
     if (debtor.amount === 0) debtors.shift();
   }
   return plan;
 }
 
-// ---------- 5. EXCHANGE RATES ----------
-// Rates are saved for 12 hours so the app still works offline.
+
 let ratesCache = { ts: 0, rates: null };
 
 try {
   const saved = JSON.parse(localStorage.getItem(RATES_KEY));
   if (saved) ratesCache = saved;
 } catch (error) {
-  // nothing saved yet, that's fine
+  console.error("Error loading exchange rate:", error);
 }
 
-// How many units of `currency` equal 1 NGN?
+
 function getRate(currency) {
   if (currency === "NGN") return 1;
   if (!ratesCache.rates) return undefined;
@@ -385,13 +332,10 @@ async function loadRates() {
     ratesCache = { ts: Date.now(), rates: json.rates };
     localStorage.setItem(RATES_KEY, JSON.stringify(ratesCache));
   } catch (error) {
-    // offline? keep using what we have
+    console.error("Error loading exchange rate:", error);
   }
 }
 
-// ---------- 6. POP-UPS (notification + modal) ----------
-
-// Small message in the top-right corner. type: success | danger | warning | info
 function showNotification(message, type = "success") {
   let area = getEl("notificationArea");
   if (!area) {
@@ -414,12 +358,11 @@ function showNotification(message, type = "success") {
 
   box.append(closeButton);
   area.append(box);
-  setTimeout(() => box.remove(), 4500); // disappear after 4.5 seconds
+  setTimeout(() => box.remove(), 4500); 
 }
 
-// One reusable Bootstrap modal used for every form
 let modal = null;
-let submitHandler = null; // the function to run when OK is clicked
+let submitHandler = null; 
 
 function buildModal() {
   if (modal) return;
@@ -440,21 +383,18 @@ function buildModal() {
   );
 
   modal = bootstrap.Modal.getOrCreateInstance(getEl("appModal"));
-
   getEl("appModalForm").addEventListener("submit", function (event) {
     event.preventDefault();
     let result = null;
     if (submitHandler) result = submitHandler();
     if (typeof result === "string") {
-      setText("appModalError", result); // show the error, keep the modal open
+      setText("appModalError", result);
     } else {
       modal.hide();
     }
   });
 }
 
-// options: { title, body, okText, onSubmit, size }
-// onSubmit() can return a string (an error message). If it returns nothing, the modal closes.
 function openModal(options) {
   buildModal();
   submitHandler = options.onSubmit || null;
@@ -468,7 +408,6 @@ function openModal(options) {
   getEl("appModalDialog").className =
     "modal-dialog modal-dialog-scrollable " + (options.size || "");
 
-  // put the cursor in the first input when the modal opens
   getEl("appModal").addEventListener(
     "shown.bs.modal",
     function () {
@@ -484,7 +423,6 @@ function openModal(options) {
   return getEl("appModalBody");
 }
 
-// A simple "Are you sure?" pop-up
 function confirmDialog(message, onConfirm, okText = "Delete") {
   openModal({
     title: "Please confirm",
@@ -496,17 +434,15 @@ function confirmDialog(message, onConfirm, okText = "Delete") {
   });
 }
 
-// ---------- 7. SHARED PAGE PARTS (header, team dropdown, search) ----------
-
-// Which function draws the current page? Each page sets this in startPage()
 let renderPage = function () {};
 
-// The title row at the top of a page, with optional buttons
 function heading(title, buttons = "") {
-  return `<div class="page-heading"><h2 class="h4 fw-bold mb-0">${title}</h2><div class="d-flex gap-2 flex-wrap">${buttons}</div></div>`;
+  return `<div class="page-heading">
+  <h2 class="h4 fw-bold mb-0">${title}</h2>
+  <div class="d-flex gap-2 flex-wrap">${buttons}</div>
+  </div>`;
 }
 
-// Label showing if someone is owed, owes, or is settled
 function balanceBadge(net) {
   if (net > 0)
     return `<span class="badge badge-pos">Owed ${formatMoney(net)}</span>`;
@@ -515,8 +451,6 @@ function balanceBadge(net) {
   return `<span class="badge badge-zero">Settled</span>`;
 }
 
-// Run a function when any element with data-action="name" is clicked.
-// handlers looks like: { name: function (dataset) { ... } }
 function onAction(root, handlers) {
   root.addEventListener("click", function (event) {
     const element = event.target.closest("[data-action]");
@@ -526,13 +460,16 @@ function onAction(root, handlers) {
   });
 }
 
-// What to show when there are no teams yet
+
 function renderNoTeam(element) {
-  element.innerHTML = `<div class="panel empty-state"><i class="bi bi-people"></i><p>Create your first team to start tracking petty cash.</p><button class="btn btn-navy">Create team</button></div>`;
+  element.innerHTML = `<div class="panel empty-state">
+  <i class="bi bi-people"></i>
+  <p>Create your first team to start tracking petty cash.</p>
+  <button class="btn btn-navy">Create team</button>
+  </div>`;
   element.querySelector("button").onclick = () => openTeamForm();
 }
 
-// Create a team (or rename one if you pass an existing team)
 function openTeamForm(team) {
   const isRename = Boolean(team);
   openModal({
@@ -554,7 +491,7 @@ function openTeamForm(team) {
           custodianId: null,
         };
         state.data.teams.push(newTeam);
-        state.data.settings.activeTeamId = newTeam.id; // switch to the new team
+        state.data.settings.activeTeamId = newTeam.id;
       }
       commit();
       refresh();
@@ -563,29 +500,29 @@ function openTeamForm(team) {
   });
 }
 
-// Redraw the header and the current page
 function refresh() {
   renderHeader();
   renderPage();
 }
 
-// Draw the parts every page shares: team dropdown, balance badge, avatar
 function renderHeader() {
   const team = getTeam();
   setText("teamSelector", team ? team.name : "No teams yet");
 
-  // dropdown list of teams
   let items = "";
   for (const t of state.data.teams) {
     const active = team && t.id === team.id ? "active" : "";
-    items += `<li><button type="button" class="dropdown-item ${active}" data-team="${t.id}">${escapeHtml(t.name)}</button></li>`;
+    items += `<li>
+    <button type="button" class="dropdown-item ${active}" data-team="${t.id}">${escapeHtml(t.name)}</button>
+    </li>`;
   }
   if (state.data.teams.length > 0)
     items += `<li><hr class="dropdown-divider"></li>`;
-  items += `<li><button type="button" class="dropdown-item" data-team="__new"><i class="bi bi-plus-lg"></i> New team</button></li>`;
+  items += `<li>
+  <button type="button" class="dropdown-item" data-team="__new"><i class="bi bi-plus-lg"></i> New team</button>
+  </li>`;
   getEl("teamList").innerHTML = items;
 
-  // add up everyone's net balance (it should always be 0)
   let imbalance = 0;
   if (team) {
     const balances = teamBalances(team);
@@ -598,14 +535,11 @@ function renderHeader() {
   badge.querySelector(".balance-text").textContent =
     imbalance === 0 ? "" : "Imbalance " + formatMoney(imbalance);
 
-  // the round avatar shows the first letter of the user's name
   const userName = state.data.settings.userName || "?";
   document.querySelector(".profile-avatar").textContent =
     userName[0].toUpperCase();
 }
 
-// Set up the team dropdown + search box, then draw the page.
-// onSearch is optional: it runs while the user types in the search box.
 function initPage(onRender, onSearch) {
   renderPage = onRender;
 
@@ -626,7 +560,6 @@ function initPage(onRender, onSearch) {
 
   form.addEventListener("submit", function (event) {
     event.preventDefault();
-    // pages without their own search send you to the Expenses page
     if (!onSearch)
       location.href =
         pagesPath + "expenses.html?q=" + encodeURIComponent(input.value);
@@ -638,16 +571,12 @@ function initPage(onRender, onSearch) {
   refresh();
 }
 
-// ---------- 8. FORMS (expense/claim, payment, member) ----------
-
-// Needs a team. If there isn't one, tell the user.
 function needTeam() {
   const team = getTeam();
   if (!team) showNotification("Create a team first.", "warning");
   return team;
 }
 
-// Build <option> tags. items is a list of [value, label] pairs.
 function optionsHtml(items, selectedValue) {
   let html = "";
   for (const item of items) {
@@ -657,7 +586,6 @@ function optionsHtml(items, selectedValue) {
   return html;
 }
 
-// ["a", "b"] -> [["a", "a"], ["b", "b"]]
 function pairs(values) {
   return values.map((v) => [v, v]);
 }
@@ -667,12 +595,10 @@ function radioHtml(name, value, label, checked) {
           <label class="btn btn-outline-secondary btn-sm" for="${name}-${value}">${label}</label>`;
 }
 
-// Which radio button is selected? e.g. getChecked("exKind") -> "expense"
 function getChecked(name) {
   return document.querySelector("[name=" + name + "]:checked").value;
 }
 
-// Ids of the members whose checkbox is ticked
 function getCheckedIds() {
   const ids = [];
   for (const box of document.querySelectorAll(".who:checked")) {
@@ -681,7 +607,6 @@ function getCheckedIds() {
   return ids;
 }
 
-// What the user typed in each person's amount/percent box: { memberId: "text" }
 function getRawValues() {
   const raw = {};
   for (const input of document.querySelectorAll(".who-raw")) {
@@ -690,19 +615,15 @@ function getRawValues() {
   return raw;
 }
 
-/* ----- 8a. Expense / claim form ----- */
+let editingExpense = null; 
 
-let editingExpense = null; // the expense being edited (null when adding a new one)
-
-// Which exchange rate should we use for this currency?
 function rateFor(currency) {
   if (currency === "NGN") return 1;
   if (editingExpense && editingExpense.currency === currency)
-    return editingExpense.rate; // keep the saved rate
+    return editingExpense.rate; 
   return getRate(currency);
 }
 
-// One row per member: checkbox, name, amount box, and their calculated share
 function memberRowsHtml(memberList, expense) {
   let rows = "";
   for (const m of memberList) {
@@ -721,7 +642,10 @@ function memberRowsHtml(memberList, expense) {
 function expenseFormHtml(e, memberList) {
   const memberOptions = memberList.map((m) => [m.id, m.name]);
   return `
-    <div class="btn-group w-100 mb-2">${radioHtml("exKind", "expense", "Expense", e.kind === "expense")}${radioHtml("exKind", "claim", "Reimbursement claim", e.kind === "claim")}</div>
+    <div class="btn-group w-100 mb-2">
+    ${radioHtml("exKind", "expense", "Expense", e.kind === "expense")}
+    ${radioHtml("exKind", "claim", "Reimbursement claim", e.kind === "claim")}
+    </div>
     <label class="form-label small mb-1" for="exTitle">Title / purpose</label>
     <input class="form-control mb-2" id="exTitle" maxlength="80" value="${escapeHtml(e.title)}">
     <div class="row g-2">
@@ -744,7 +668,6 @@ function expenseFormHtml(e, memberList) {
     <div id="exSumLine" class="small text-secondary mt-1"></div>`;
 }
 
-// Pass an expense id to edit it, or nothing to add a new one
 function openExpenseForm(id) {
   const team = needTeam();
   if (!team) return;
@@ -757,7 +680,6 @@ function openExpenseForm(id) {
 
   editingExpense = state.data.expenses.find((e) => e.id === id) || null;
 
-  // starting values for the form
   let expense = editingExpense;
   if (!expense) {
     expense = {
@@ -775,7 +697,6 @@ function openExpenseForm(id) {
   }
   if (!expense.raw) expense.raw = {};
 
-  // show archived members only if this expense already uses them
   const memberList = membersOf(team, true).filter(
     (m) =>
       m.active !== false ||
@@ -793,13 +714,12 @@ function openExpenseForm(id) {
 
   body.oninput = updateExpensePreview;
   updateExpensePreview();
-  // get the exchange rates, then refresh the preview if the form is still open
+  
   loadRates().then(function () {
     if (getEl("exAmount")) updateExpensePreview();
   });
 }
 
-// Read everything the user typed. Returns { error } if something is missing.
 function readExpenseForm() {
   const title = getEl("exTitle").value.trim();
   const original = parseFloat(getEl("exAmount").value);
@@ -821,7 +741,6 @@ function readExpenseForm() {
   };
 }
 
-// Runs when the user clicks Save
 function saveExpense() {
   const team = getTeam();
   const form = readExpenseForm();
@@ -844,7 +763,6 @@ function saveExpense() {
   );
   if (result.error) return result.error;
 
-  // Expenses are approved straight away. New claims wait for approval.
   let status = "pending";
   if (form.kind === "expense") status = "approved";
   else if (editingExpense && editingExpense.kind === "claim")
@@ -886,7 +804,6 @@ function saveExpense() {
   else showNotification("Expense saved.");
 }
 
-// Live preview inside the form: converted amount + each person's share
 function updateExpensePreview() {
   const currency = getEl("exCurrency").value;
   const split = getChecked("exSplit");
@@ -894,12 +811,10 @@ function updateExpensePreview() {
   const rate = rateFor(currency);
   const totalKobo = rate ? Math.round((amount * 100) / rate) : 0;
 
-  // only show the amount/percent boxes when the split is not equal
   for (const input of document.querySelectorAll(".who-raw")) {
     input.style.display = split === "equal" ? "none" : "";
   }
 
-  // exchange rate message
   let rateText = "";
   if (currency !== "NGN" && rate) {
     rateText =
@@ -916,7 +831,6 @@ function updateExpensePreview() {
   }
   setText("exRateInfo", rateText);
 
-  // each person's share
   const result = splitExpense(
     split,
     totalKobo,
@@ -930,15 +844,11 @@ function updateExpensePreview() {
     span.textContent = share !== undefined ? formatMoney(share) : "";
   }
 
-  // message under the list
   let sumText = "Shares add up to the total ✔";
   if (result.error) sumText = amount ? result.error : "";
   setText("exSumLine", sumText);
 }
 
-/* ----- 8b. Payment form ----- */
-
-// Pass { from, to, amount } to pre-fill the form (used by Settle Up)
 function openPaymentForm(prefill = {}) {
   const team = needTeam();
   if (!team) return;
@@ -1000,9 +910,6 @@ function openPaymentForm(prefill = {}) {
   });
 }
 
-/* ----- 8c. Member form ----- */
-
-// Pass a member to edit them, or nothing to add a new one
 function openMemberForm(member) {
   const team = needTeam();
   if (!team) return;
@@ -1019,7 +926,6 @@ function openMemberForm(member) {
       const role = getEl("memRole").value.trim();
       if (!name) return "Name cannot be empty.";
 
-      // no two members with the same name
       const nameTaken = membersOf(team).some(
         (m) => m !== member && m.name.toLowerCase() === name.toLowerCase(),
       );
@@ -1044,7 +950,6 @@ function openMemberForm(member) {
   });
 }
 
-// Members who still owe (or are owed) money can't be removed. Everyone else is "archived".
 function removeMember(id) {
   const team = getTeam();
   const member = state.data.members.find((m) => m.id === id);
@@ -1055,7 +960,9 @@ function removeMember(id) {
     const situation = net > 0 ? "is still owed" : "still owes";
     openModal({
       title: "Cannot remove member",
-      body: `<p class="mb-0"><b>${escapeHtml(member.name)}</b> ${situation} <b>${formatMoney(Math.abs(net))}</b>. Record a payment first, then remove them.</p>`,
+      body: `<p class="mb-0">
+      <b>${escapeHtml(member.name)}</b> ${situation} <b>${formatMoney(Math.abs(net))}</b>.
+       Record a payment first, then remove them.</p>`,
     });
     return;
   }
@@ -1073,9 +980,8 @@ function removeMember(id) {
   );
 }
 
-// ---------- 9. DASHBOARD PAGE (index.html) ----------
 
-let viewMonth = monthOf(today()); // "2026-10" or "all"
+let viewMonth = monthOf(today());
 let spendingChart = null;
 let memberChart = null;
 
@@ -1086,7 +992,6 @@ function greeting() {
   return "Good evening";
 }
 
-// "2026-01" -> "2025-12"
 function previousMonth(monthKey) {
   const parts = monthKey.split("-");
   const date = new Date(Number(parts[0]), Number(parts[1]) - 2, 1);
@@ -1095,7 +1000,6 @@ function previousMonth(monthKey) {
   );
 }
 
-// The small badge: "▲ 10% vs last month"
 function showSpendingChange(approved, periodTotal) {
   const badge = getEl("spendingChange");
 
@@ -1134,16 +1038,18 @@ function showRecentActivity(team) {
       dateStyle: "medium",
       timeStyle: "short",
     });
-    html += `<div class="row-item"><div class="row-main small">${escapeHtml(activity.text)}</div><small class="text-secondary">${when}</small></div>`;
+    html += `<div class="row-item">
+    <div class="row-main small">${escapeHtml(activity.text)}</div>
+    <small class="text-secondary">${when}</small>
+    </div>`;
   }
   if (html === "")
     html = `<div class="empty-state">No activity yet. Add the first expense or claim.</div>`;
   getEl("recentActivity").innerHTML = html;
 }
 
-// Doughnut chart: spending by category
 function drawCategoryChart(inView) {
-  const totals = {}; // { category: kobo }
+  const totals = {};
   for (const expense of inView) {
     totals[expense.category] = (totals[expense.category] || 0) + expense.amount;
   }
@@ -1181,7 +1087,6 @@ function drawCategoryChart(inView) {
     },
   });
 
-  // the legend under the chart
   let legend = "";
   for (let i = 0; i < categories.length; i++) {
     legend += `<div class="legend-item"><span class="legend-dot" style="background:${colors[i]}"></span><span class="legend-name">${escapeHtml(categories[i])}</span><span class="legend-value">${formatMoney(totals[categories[i]])}</span></div>`;
@@ -1191,7 +1096,6 @@ function drawCategoryChart(inView) {
   getEl("categoryLegend").innerHTML = legend;
 }
 
-// Bar chart: what each member paid vs their share
 function drawMemberChart(inView, members) {
   const paid = {};
   const share = {};
@@ -1263,7 +1167,6 @@ function renderDashboard() {
   const allExpenses = team ? expensesOf(team) : [];
   const approved = allExpenses.filter((e) => e.status === "approved");
 
-  // only the expenses in the month we are viewing
   let inView = approved;
   if (viewMonth !== "all")
     inView = approved.filter((e) => monthOf(e.date) === viewMonth);
@@ -1273,7 +1176,6 @@ function renderDashboard() {
   const periodText = viewMonth === "all" ? "All time" : monthLabel(viewMonth);
   const periodTotal = sumAmounts(inView);
 
-  // top of the page
   setText("greetingMessage", greeting());
   setText(
     "teamIntro",
@@ -1283,7 +1185,6 @@ function renderDashboard() {
   );
   setText("currentMonth", periodText);
 
-  // notice when there is no team
   if (team) {
     getEl("dashboardNotice").innerHTML = "";
   } else {
@@ -1292,7 +1193,6 @@ function renderDashboard() {
     getEl("noticeBtn").onclick = () => openTeamForm();
   }
 
-  // summary cards
   setText("totalTeamSpending", formatMoney(periodTotal));
   setText("spendingPeriod", periodText);
   showSpendingChange(approved, periodTotal);
@@ -1308,26 +1208,21 @@ function renderDashboard() {
   setText("membersToSettle", membersToSettle);
   setText("settlementBalance", formatMoney(totalDebt) + " to balance");
 
-  // audit banner (firstChild is the text before the little dot)
   getEl("auditTitle").firstChild.textContent =
     imbalance === 0 ? "Ledger balanced " : "Ledger out of balance ";
 
-  // charts
   setText("chartTotalSpending", formatMoney(periodTotal));
   setText(
     "chartExpenseCount",
     inView.length + (inView.length === 1 ? " expense" : " expenses"),
   );
   if (typeof Chart !== "undefined") {
-    // (Chart is the Chart.js library loaded in index.html)
     drawCategoryChart(inView);
     drawMemberChart(inView, members);
   }
-
   showRecentActivity(team);
 }
 
-// "Choose period" pop-up
 function openPeriodPicker() {
   const team = getTeam();
   const months = [monthOf(today())];
@@ -1374,8 +1269,6 @@ function startDashboard() {
   initPage(renderDashboard);
 }
 
-// ---------- 10. EXPENSES & CLAIMS PAGE ----------
-
 const expenseFilters = {
   q: new URLSearchParams(location.search).get("q") || "",
   member: "",
@@ -1419,7 +1312,6 @@ function expenseRowHtml(expense, names) {
     </div></div>`;
 }
 
-// Does this expense pass the filters?
 function expenseMatches(expense) {
   const search = expenseFilters.q.toLowerCase();
   if (expenseFilters.member) {
@@ -1437,7 +1329,6 @@ function expenseMatches(expense) {
   return true;
 }
 
-// One filter dropdown
 function filterSelect(key, allLabel, options) {
   const selectedOptions = options.map(
     (o) =>
@@ -1459,7 +1350,6 @@ function renderExpensesPage() {
     .filter(expenseMatches)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  // months that have expenses, newest first
   const months = [...new Set(allExpenses.map((e) => monthOf(e.date)))]
     .sort()
     .reverse();
@@ -1499,7 +1389,6 @@ function renderExpensesPage() {
      <div class="panel">${list}</div>`;
 }
 
-// Approve or reject a claim
 function setExpenseStatus(id, status) {
   const expense = state.data.expenses.find((e) => e.id === id);
   expense.status = status;
@@ -1526,7 +1415,6 @@ function startExpensesPage() {
     },
   });
 
-  // when a filter dropdown changes
   el.addEventListener("change", function (event) {
     const key = event.target.dataset.filter;
     if (key) {
@@ -1541,9 +1429,6 @@ function startExpensesPage() {
   });
 }
 
-// ---------- 11. TEAM BALANCES PAGE ----------
-
-// "+₦500.00" for positive numbers
 function signedMoney(amount) {
   return (amount > 0 ? "+" : "") + formatMoney(amount);
 }
@@ -1575,7 +1460,6 @@ function renderBalancesPage() {
 
   const balances = teamBalances(team);
 
-  // active members, plus archived ones who still owe or are owed money
   const members = membersOf(team, true).filter(
     (m) => m.active !== false || balances[m.id].net !== 0,
   );
@@ -1620,9 +1504,7 @@ function startBalancesPage() {
   initPage(renderBalancesPage);
 }
 
-// ---------- 12. SETTLE UP PAGE ----------
-
-let settlePlan = []; // the suggested payments
+let settlePlan = []; 
 
 function settleRowHtml(payment, index, names) {
   return `<div class="row-item">
@@ -1653,14 +1535,13 @@ function renderSettleUpPage() {
 }
 
 function startSettleUpPage() {
-  // open the payment form already filled in
+
   onAction(getEl("pageContent"), {
     record: (data) => openPaymentForm(settlePlan[Number(data.i)]),
   });
   initPage(renderSettleUpPage);
 }
 
-// ---------- 13. PAYMENTS PAGE ----------
 
 function paymentRowHtml(payment, names) {
   const note = payment.note ? " · " + escapeHtml(payment.note) : "";
@@ -1718,8 +1599,6 @@ function startPaymentsPage() {
   initPage(renderPaymentsPage);
 }
 
-// ---------- 14. TEAM MEMBERS PAGE ----------
-
 function memberRowHtml(member, balances) {
   const net = balances[member.id] ? balances[member.id].net : 0;
   return `<div class="row-item">
@@ -1760,7 +1639,6 @@ function renderMembersPage() {
      </div>`;
 }
 
-// Delete the active team and everything that belongs to it
 function deleteActiveTeam() {
   const teamId = getTeam().id;
   const data = state.data;
@@ -1792,10 +1670,7 @@ function startMembersPage() {
   initPage(renderMembersPage);
 }
 
-// ---------- 15. ACTIVITY HISTORY PAGE ----------
-// The layout is in pages/history.html, this code fills it in.
-
-const HISTORY_PAGE_SIZE = 10; // rows per page
+const HISTORY_PAGE_SIZE = 10; 
 const historyFilters = { q: "", member: "", category: "", month: "" };
 let historyPage = 1;
 
@@ -1806,12 +1681,10 @@ const STATUS_BADGE = {
   completed: "badge-pos",
 };
 
-// "approved" -> "Approved"
 function capitalise(text) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-// Put expenses, claims and payments into one list of simple rows
 function buildHistoryRows(team) {
   const names = makeNameLookup(membersOf(team, true));
   const rows = [];
@@ -1841,11 +1714,10 @@ function buildHistoryRows(team) {
     });
   }
 
-  rows.sort((a, b) => b.date.localeCompare(a.date)); // newest first
+  rows.sort((a, b) => b.date.localeCompare(a.date)); 
   return rows;
 }
 
-// Fill a <select> with options. Keep the current choice if it still exists.
 function fillSelect(id, firstLabel, options, currentValue) {
   let html = `<option value="">${firstLabel}</option>`;
   let stillExists = false;
@@ -1857,7 +1729,6 @@ function fillSelect(id, firstLabel, options, currentValue) {
   getEl(id).value = stillExists ? currentValue : "";
 }
 
-// Does a row pass the filters?
 function historyRowMatches(row) {
   const search = historyFilters.q.trim().toLowerCase();
   if (search && !row.title.toLowerCase().includes(search)) return false;
@@ -1870,7 +1741,6 @@ function historyRowMatches(row) {
   return true;
 }
 
-// How many rows have this type? e.g. countType(rows, "Claim")
 function countType(rows, type) {
   return rows.filter((row) => row.type === type).length;
 }
@@ -1892,7 +1762,6 @@ function renderHistoryPage() {
 
   setText("historyCurrentMonth", monthLabel(monthOf(today())));
 
-  // filter dropdowns
   const months = [...new Set(rows.map((r) => monthOf(r.date)))]
     .sort()
     .reverse();
@@ -1915,14 +1784,12 @@ function renderHistoryPage() {
     historyFilters.month,
   );
 
-  // if a chosen option disappeared, the select reset itself - remember that
   historyFilters.member = getEl("historyMemberFilter").value;
   historyFilters.category = getEl("historyCategoryFilter").value;
   historyFilters.month = getEl("historyMonthFilter").value;
 
   const shown = rows.filter(historyRowMatches);
 
-  // summary cards
   const uniqueMembers = new Set();
   for (const row of shown) {
     for (const id of row.memberIds) {
@@ -1935,7 +1802,6 @@ function renderHistoryPage() {
   setText("historyTotalClaims", countType(shown, "Claim"));
   setText("historyTotalMembers", uniqueMembers.size);
 
-  // table + pagination
   const totalPages = Math.max(1, Math.ceil(shown.length / HISTORY_PAGE_SIZE));
   if (historyPage > totalPages) historyPage = totalPages;
   const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
@@ -1968,7 +1834,6 @@ function renderHistoryPage() {
   getEl("historyNextPage").disabled = historyPage >= totalPages;
 }
 
-// When a filter changes: save it, go back to page 1, redraw
 function historyFilterChanged(key) {
   return function (event) {
     historyFilters[key] = event.target.value;
@@ -2010,7 +1875,6 @@ function startHistoryPage() {
     renderHistoryPage();
   });
 
-  // the top search box also searches this page
   initPage(renderHistoryPage, function (text) {
     historyFilters.q = text;
     getEl("historySearch").value = text;
@@ -2019,11 +1883,9 @@ function startHistoryPage() {
   });
 }
 
-// ---------- 16. "COMING SOON" PAGES (Recurring Bills, Settings) ----------
-
 function startComingSoonPage() {
   const el = getEl("pageContent");
-  const title = el.dataset.title; // comes from data-title in the page's HTML
+  const title = el.dataset.title; 
   const icon = el.dataset.icon || "bi-hourglass-split";
 
   initPage(function () {
@@ -2033,9 +1895,7 @@ function startComingSoonPage() {
   });
 }
 
-// ---------- 17. START: which page are we on? ----------
-
-const pageName = location.pathname.split("/").pop(); // e.g. "expenses.html"
+const pageName = location.pathname.split("/").pop(); 
 
 if (pageName === "" || pageName === "index.html") startDashboard();
 else if (pageName === "expenses.html") startExpensesPage();
@@ -2044,4 +1904,4 @@ else if (pageName === "settle-up.html") startSettleUpPage();
 else if (pageName === "payments.html") startPaymentsPage();
 else if (pageName === "members.html") startMembersPage();
 else if (pageName === "history.html") startHistoryPage();
-else startComingSoonPage(); // recurring-bills.html and settings.html
+else startComingSoonPage(); 
