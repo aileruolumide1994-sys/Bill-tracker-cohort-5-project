@@ -1,6 +1,6 @@
 const DATA_KEY = "officeflow_data";
 
-export function createInitialData() {
+function createInitialData() {
   return {
     teams: [],
     members: [],
@@ -16,7 +16,7 @@ export function createInitialData() {
   };
 }
 
-export function loadData() {
+function loadData() {
   try {
     const savedData = localStorage.getItem(DATA_KEY);
 
@@ -48,7 +48,7 @@ export function loadData() {
   }
 }
 
-export function saveData(data) {
+function saveData(data) {
   try {
     localStorage.setItem(DATA_KEY, JSON.stringify(data));
   } catch {

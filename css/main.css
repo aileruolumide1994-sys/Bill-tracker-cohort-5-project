@@ -160,7 +160,6 @@ body {
   position: absolute;
   top: 7px;
   right: 7px;
-
   width: 7px;
   height: 7px;
   background-color: #dc2626;
@@ -172,15 +171,12 @@ body {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-
   background-color: #dbeafe;
   color: var(--primary-color);
   border: none;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
   font-weight: bold;
 }
 
@@ -422,7 +418,7 @@ body {
 /* Four summary cards */
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -777,7 +773,7 @@ body {
 ================================ */
 
 .history-page {
-  padding: 28px;
+  padding: 28px 10px;
   min-width: 0;
   color: var(--text-primary);
   min-height: 100%;
@@ -1441,5 +1437,18 @@ body {
 
   .member-select {
     flex: 1;
+  }
+}
+
+.expensesFilter {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  width: 100%;
+}
+
+@media (max-width: 767.98px) {
+  .expensesFilter {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

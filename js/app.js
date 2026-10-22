@@ -1,26 +1,17 @@
-// Overview (dashboard) page
-import { state, getTeam, membersOf, expensesOf } from "./core/state.js";
-import {
-  initPage,
-  teamBalances,
-  openTeamForm,
-  pagesPath,
-} from "./core/shell.js";
-import { openExpenseForm, openPaymentForm } from "./features/forms.js";
-import { openModal } from "./utils/modal.js";
-import {
-  formatMoney,
-  escapeHtml,
-  monthOf,
-  monthLabel,
-  today,
-} from "./utils/format.js";
-
-function byId(id) {
-  return document.getElementById(id);
-}
-
-const CHART_COLOURS = [
+// CATEGORIES
+const CATEGORIES = [
+  "Stationery",
+  "Internet",
+  "Cleaning",
+  "Software Subscription",
+  "Travel",
+  "Food & Refreshments",
+  "Equipment",
+  "Miscellenous",
+  "Other",
+];
+const CURRENCIES = ["NGN", "USD", "EUR", "GBP", "CAD", "GHS", "ZAR", "KES"];
+const CHART_COLORS = [
   "#172554",
   "#047857",
   "#60D5A5",
@@ -30,42 +21,1060 @@ const CHART_COLOURS = [
   "#93C5FD",
   "#64748B",
 ];
-const COLORS = CHART_COLOURS;
+const RATES_KEY = "officeflow_rates";
+const RATES_URL = "https://open.er-api.com/v6/latest/NGN";
 
-let viewMonth = monthOf(today());
+// Pages live inside /pages/, the home page does not, so links start differently
+const pagesPath = location.pathname.includes("/pages/") ? "" : "pages/";
+
+// A shortcut so we don't type document.getElementById every time
+function getEl(id) {
+  return document.getElementById(id);
+}
+
+// A shortcut to change the text of an element
+function setText(id, text) {
+  getEl(id).textContent = text;
+}
+
+// ---------- 2. HELPER FUNCTIONS (money, dates, text) ----------
+
+// Money is saved in kobo (1 naira = 100 kobo) so we never get decimal bugs
+function formatMoney(kobo, currency = "NGN") {
+  const formatter = new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency: currency,
+  });
+  return formatter.format((kobo || 0) / 100);
+}
+
+function createId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2, 10);
+}
+
+// Stops typed text from being treated as HTML
+function escapeHtml(text) {
+  let result = String(text === null || text === undefined ? "" : text);
+  result = result.replaceAll("&", "&amp;");
+  result = result.replaceAll("<", "&lt;");
+  result = result.replaceAll(">", "&gt;");
+  result = result.replaceAll('"', "&quot;");
+  result = result.replaceAll("'", "&#39;");
+  return result;
+}
+
+function today() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return now.getFullYear() + "-" + month + "-" + day;
+}
+
+// "2026-10-22" -> "2026-10"
+function monthOf(date) {
+  return date.slice(0, 7);
+}
+
+// "2026-10" -> "October 2026"
+function monthLabel(month) {
+  return new Date(month + "-01T00:00").toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+// "2026-10-22" -> "22 Oct 2026"
+function formatDate(date) {
+  return new Date(date + "T00:00").toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+// "Ada Lovelace" -> "AL"
+function initials(name) {
+  const words = name.split(/\s+/);
+  let letters = "";
+  for (const word of words) {
+    letters = letters + word[0];
+  }
+  return letters.slice(0, 2).toUpperCase();
+}
+
+// Add up the amount of a list of expenses
+function sumAmounts(list) {
+  let total = 0;
+  for (const item of list) {
+    total = total + item.amount;
+  }
+  return total;
+}
+
+// Turn a list of names into a lookup: { id: name }
+function makeNameLookup(members) {
+  const names = {};
+  for (const member of members) {
+    names[member.id] = member.name;
+  }
+  return names;
+}
+
+// ---------- 3. DATA (state) ----------
+
+// Load saved data. If it is broken, keep a backup copy and start fresh.
+function safeLoad() {
+  try {
+    return loadData();
+  } catch (error) {
+    localStorage.setItem(
+      "officeflow_data_backup",
+      localStorage.getItem("officeflow_data") || "",
+    );
+    return createInitialData();
+  }
+}
+
+// state.data holds teams, members, expenses, payments, activities, settings
+const state = { data: safeLoad() };
+
+// Save state.data to localStorage
+function commit() {
+  try {
+    saveData(state.data);
+  } catch (error) {
+    showNotification(error.message, "danger");
+  }
+}
+
+// The team the user is looking at (or null if there are no teams)
+function getTeam() {
+  let team = state.data.teams.find(
+    (t) => t.id === state.data.settings.activeTeamId,
+  );
+  if (!team) team = state.data.teams[0] || null;
+  state.data.settings.activeTeamId = team ? team.id : null;
+  return team;
+}
+
+function setTeam(id) {
+  state.data.settings.activeTeamId = id;
+  commit();
+}
+
+// Members of a team. Archived members are hidden unless includeArchived is true
+function membersOf(team, includeArchived = false) {
+  return state.data.members.filter(
+    (m) => m.teamId === team.id && (includeArchived || m.active !== false),
+  );
+}
+
+function expensesOf(team) {
+  return state.data.expenses.filter((e) => e.teamId === team.id);
+}
+
+function paymentsOf(team) {
+  return state.data.payments.filter((p) => p.teamId === team.id);
+}
+
+// Add a line to "Recent activity" (newest first, we keep only 200)
+function logActivity(team, text) {
+  state.data.activities.unshift({
+    id: createId(),
+    teamId: team.id,
+    text: text,
+    at: new Date().toISOString(),
+  });
+  if (state.data.activities.length > 200) state.data.activities.length = 200;
+}
+
+//  MONEY CALCULATIONS
+function allocate(total, weights) {
+  let weightSum = 0;
+  for (const weight of weights) {
+    weightSum = weightSum + weight;
+  }
+  if (weightSum === 0) return weights.map(() => 0);
+
+  // Step 1: everyone gets their share rounded DOWN
+  const parts = [];
+  let given = 0;
+  for (let i = 0; i < weights.length; i++) {
+    const exact = (total * weights[i]) / weightSum;
+    const rounded = Math.floor(exact);
+    parts.push({ amount: rounded, remainder: exact - rounded });
+    given = given + rounded;
+  }
+
+  // Step 2: give the leftover kobo, one by one, to the biggest remainders
+  let leftover = total - given;
+  const sorted = parts.slice().sort((a, b) => b.remainder - a.remainder);
+  for (const part of sorted) {
+    if (leftover > 0) {
+      part.amount = part.amount + 1;
+      leftover = leftover - 1;
+    }
+  }
+  return parts.map((part) => part.amount);
+}
+
+// How much does each person owe for ONE expense?
+// split is "equal", "exact" or "percent"
+// Returns { shares: { memberId: kobo } } or { error: "message" }
+function splitExpense(split, totalKobo, original, currency, ids, raw) {
+  if (ids.length === 0)
+    return { error: "Select at least one member to share this." };
+
+  let weights = ids.map(() => 1); // equal split: everyone has weight 1
+  if (split !== "equal") {
+    weights = ids.map((id) => parseFloat(raw[id]) || 0);
+    let sum = 0;
+    for (const weight of weights) {
+      if (weight < 0) return { error: "Values cannot be negative." };
+      sum = sum + weight;
+    }
+    if (
+      split === "exact" &&
+      Math.round(sum * 100) !== Math.round(original * 100)
+    ) {
+      return {
+        error:
+          "Exact amounts total " +
+          formatMoney(sum * 100, currency) +
+          " but must equal " +
+          formatMoney(original * 100, currency) +
+          ".",
+      };
+    }
+    if (split === "percent" && Math.abs(sum - 100) > 0.000001) {
+      return {
+        error: "Percentages total " + sum.toFixed(2) + "% but must equal 100%.",
+      };
+    }
+  }
+
+  const amounts = allocate(totalKobo, weights);
+  const shares = {};
+  for (let i = 0; i < ids.length; i++) {
+    shares[ids[i]] = amounts[i];
+  }
+  return { shares: shares };
+}
+
+// Work out each member's balance. Only APPROVED expenses count.
+// net > 0: the team owes them.  net < 0: they owe the team.
+function calculateBalances(members, expenses, payments) {
+  const balances = {};
+
+  // Make sure a person has a row, then return it
+  function getRow(id) {
+    if (!balances[id]) balances[id] = { paid: 0, share: 0, settled: 0, net: 0 };
+    return balances[id];
+  }
+
+  for (const member of members) {
+    getRow(member.id);
+  }
+  for (const expense of expenses) {
+    if (expense.status !== "approved") continue;
+    getRow(expense.payerId).paid += expense.amount;
+    for (const id in expense.shares) {
+      getRow(id).share += expense.shares[id];
+    }
+  }
+  for (const payment of payments) {
+    getRow(payment.from).settled += payment.amount;
+    getRow(payment.to).settled -= payment.amount;
+  }
+  for (const id in balances) {
+    const row = balances[id];
+    row.net = row.paid - row.share + row.settled;
+  }
+  return balances;
+}
+
+function teamBalances(team) {
+  return calculateBalances(
+    membersOf(team, true),
+    expensesOf(team),
+    paymentsOf(team),
+  );
+}
+
+// Who should pay whom so everyone ends at zero?
+// Idea: match the biggest debtor with the biggest creditor, again and again.
+function createSettlementPlan(balances) {
+  const creditors = []; // people who are owed money
+  const debtors = []; // people who owe money
+  const plan = [];
+
+  for (const id in balances) {
+    const net = balances[id].net;
+    if (net > 0) creditors.push({ id: id, amount: net });
+    if (net < 0) debtors.push({ id: id, amount: -net });
+  }
+
+  while (creditors.length > 0 && debtors.length > 0) {
+    creditors.sort((a, b) => b.amount - a.amount);
+    debtors.sort((a, b) => b.amount - a.amount);
+    const creditor = creditors[0];
+    const debtor = debtors[0];
+    const amount = Math.min(creditor.amount, debtor.amount);
+
+    plan.push({ from: debtor.id, to: creditor.id, amount: amount });
+    creditor.amount -= amount;
+    debtor.amount -= amount;
+
+    if (creditor.amount === 0) creditors.shift(); // finished, remove
+    if (debtor.amount === 0) debtors.shift();
+  }
+  return plan;
+}
+
+// ---------- 5. EXCHANGE RATES ----------
+// Rates are saved for 12 hours so the app still works offline.
+let ratesCache = { ts: 0, rates: null };
+
+try {
+  const saved = JSON.parse(localStorage.getItem(RATES_KEY));
+  if (saved) ratesCache = saved;
+} catch (error) {
+  // nothing saved yet, that's fine
+}
+
+// How many units of `currency` equal 1 NGN?
+function getRate(currency) {
+  if (currency === "NGN") return 1;
+  if (!ratesCache.rates) return undefined;
+  return ratesCache.rates[currency];
+}
+
+async function loadRates() {
+  const twelveHours = 12 * 60 * 60 * 1000;
+  if (ratesCache.rates && Date.now() - ratesCache.ts < twelveHours) return;
+  try {
+    const response = await fetch(RATES_URL);
+    const json = await response.json();
+    if (json.result !== "success") throw new Error("bad response");
+    ratesCache = { ts: Date.now(), rates: json.rates };
+    localStorage.setItem(RATES_KEY, JSON.stringify(ratesCache));
+  } catch (error) {
+    // offline? keep using what we have
+  }
+}
+
+// ---------- 6. POP-UPS (notification + modal) ----------
+
+// Small message in the top-right corner. type: success | danger | warning | info
+function showNotification(message, type = "success") {
+  let area = getEl("notificationArea");
+  if (!area) {
+    area = document.createElement("div");
+    area.id = "notificationArea";
+    document.body.append(area);
+  }
+
+  const box = document.createElement("div");
+  box.className =
+    "alert alert-" + type + " alert-dismissible shadow-sm py-2 mb-2";
+  box.setAttribute("role", "alert");
+  box.textContent = message;
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.className = "btn-close";
+  closeButton.setAttribute("aria-label", "Close");
+  closeButton.onclick = () => box.remove();
+
+  box.append(closeButton);
+  area.append(box);
+  setTimeout(() => box.remove(), 4500); // disappear after 4.5 seconds
+}
+
+// One reusable Bootstrap modal used for every form
+let modal = null;
+let submitHandler = null; // the function to run when OK is clicked
+
+function buildModal() {
+  if (modal) return; // already built
+  document.body.insertAdjacentHTML(
+    "beforeend",
+    `
+  <div class="modal fade" id="appModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable" id="appModalDialog">
+      <form class="modal-content" id="appModalForm" novalidate>
+        <div class="modal-header"><h5 class="modal-title" id="appModalTitle"></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+        <div class="modal-body"><div id="appModalBody"></div><div id="appModalError" class="text-danger small mt-2" role="alert"></div></div>
+        <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-navy" id="appModalOk"></button></div>
+      </form>
+    </div>
+  </div>`,
+  );
+
+  modal = bootstrap.Modal.getOrCreateInstance(getEl("appModal"));
+
+  getEl("appModalForm").addEventListener("submit", function (event) {
+    event.preventDefault();
+    let result = null;
+    if (submitHandler) result = submitHandler();
+    if (typeof result === "string") {
+      setText("appModalError", result); // show the error, keep the modal open
+    } else {
+      modal.hide();
+    }
+  });
+}
+
+// options: { title, body, okText, onSubmit, size }
+// onSubmit() can return a string (an error message). If it returns nothing, the modal closes.
+function openModal(options) {
+  buildModal();
+  submitHandler = options.onSubmit || null;
+
+  setText("appModalTitle", options.title);
+  getEl("appModalBody").innerHTML = options.body;
+  getEl("appModalBody").oninput = null;
+  setText("appModalError", "");
+  setText("appModalOk", options.okText || "Save");
+  getEl("appModalOk").hidden = !options.onSubmit;
+  getEl("appModalDialog").className =
+    "modal-dialog modal-dialog-scrollable " + (options.size || "");
+
+  // put the cursor in the first input when the modal opens
+  getEl("appModal").addEventListener(
+    "shown.bs.modal",
+    function () {
+      const firstInput = getEl("appModalBody").querySelector(
+        "input:not([type=radio]), select",
+      );
+      if (firstInput) firstInput.focus();
+    },
+    { once: true },
+  );
+
+  modal.show();
+  return getEl("appModalBody");
+}
+
+// A simple "Are you sure?" pop-up
+function confirmDialog(message, onConfirm, okText = "Delete") {
+  openModal({
+    title: "Please confirm",
+    body: `<p class="mb-0">${message}</p>`,
+    okText: okText,
+    onSubmit: function () {
+      onConfirm();
+    },
+  });
+}
+
+// ---------- 7. SHARED PAGE PARTS (header, team dropdown, search) ----------
+
+// Which function draws the current page? Each page sets this in startPage()
+let renderPage = function () {};
+
+// The title row at the top of a page, with optional buttons
+function heading(title, buttons = "") {
+  return `<div class="page-heading"><h2 class="h4 fw-bold mb-0">${title}</h2><div class="d-flex gap-2 flex-wrap">${buttons}</div></div>`;
+}
+
+// Label showing if someone is owed, owes, or is settled
+function balanceBadge(net) {
+  if (net > 0)
+    return `<span class="badge badge-pos">Owed ${formatMoney(net)}</span>`;
+  if (net < 0)
+    return `<span class="badge badge-neg">Owes ${formatMoney(-net)}</span>`;
+  return `<span class="badge badge-zero">Settled</span>`;
+}
+
+// Run a function when any element with data-action="name" is clicked.
+// handlers looks like: { name: function (dataset) { ... } }
+function onAction(root, handlers) {
+  root.addEventListener("click", function (event) {
+    const element = event.target.closest("[data-action]");
+    if (!element) return;
+    const handler = handlers[element.dataset.action];
+    if (handler) handler(element.dataset);
+  });
+}
+
+// What to show when there are no teams yet
+function renderNoTeam(element) {
+  element.innerHTML = `<div class="panel empty-state"><i class="bi bi-people"></i><p>Create your first team to start tracking petty cash.</p><button class="btn btn-navy">Create team</button></div>`;
+  element.querySelector("button").onclick = () => openTeamForm();
+}
+
+// Create a team (or rename one if you pass an existing team)
+function openTeamForm(team) {
+  const isRename = Boolean(team);
+  openModal({
+    title: isRename ? "Rename team" : "Create a team",
+    okText: isRename ? "Save" : "Create team",
+    body: `<label class="form-label" for="teamName">Team name</label>
+           <input class="form-control" id="teamName" maxlength="60" placeholder="e.g. Marketing Team" value="${escapeHtml(isRename ? team.name : "")}">`,
+    onSubmit: function () {
+      const name = getEl("teamName").value.trim();
+      if (!name) return "Please enter a team name.";
+
+      if (isRename) {
+        team.name = name;
+      } else {
+        const newTeam = {
+          id: createId(),
+          name: name,
+          pettyCash: 0,
+          custodianId: null,
+        };
+        state.data.teams.push(newTeam);
+        state.data.settings.activeTeamId = newTeam.id; // switch to the new team
+      }
+      commit();
+      refresh();
+      showNotification(isRename ? "Team renamed." : "Team created.");
+    },
+  });
+}
+
+// Redraw the header and the current page
+function refresh() {
+  renderHeader();
+  renderPage();
+}
+
+// Draw the parts every page shares: team dropdown, balance badge, avatar
+function renderHeader() {
+  const team = getTeam();
+  setText("teamSelector", team ? team.name : "No teams yet");
+
+  // dropdown list of teams
+  let items = "";
+  for (const t of state.data.teams) {
+    const active = team && t.id === team.id ? "active" : "";
+    items += `<li><button type="button" class="dropdown-item ${active}" data-team="${t.id}">${escapeHtml(t.name)}</button></li>`;
+  }
+  if (state.data.teams.length > 0)
+    items += `<li><hr class="dropdown-divider"></li>`;
+  items += `<li><button type="button" class="dropdown-item" data-team="__new"><i class="bi bi-plus-lg"></i> New team</button></li>`;
+  getEl("teamList").innerHTML = items;
+
+  // add up everyone's net balance (it should always be 0)
+  let imbalance = 0;
+  if (team) {
+    const balances = teamBalances(team);
+    for (const id in balances) {
+      imbalance += balances[id].net;
+    }
+  }
+  const badge = document.querySelector(".balance-badge");
+  badge.classList.toggle("text-bg-danger", imbalance !== 0);
+  badge.querySelector(".balance-text").textContent =
+    imbalance === 0
+      ? "System Balanced (₦0.00)"
+      : "Imbalance " + formatMoney(imbalance);
+
+  // the round avatar shows the first letter of the user's name
+  const userName = state.data.settings.userName || "?";
+  document.querySelector(".profile-avatar").textContent =
+    userName[0].toUpperCase();
+}
+
+// Set up the team dropdown + search box, then draw the page.
+// onSearch is optional: it runs while the user types in the search box.
+function initPage(onRender, onSearch) {
+  renderPage = onRender;
+
+  getEl("teamList").addEventListener("click", function (event) {
+    const button = event.target.closest("[data-team]");
+    if (!button) return;
+    if (button.dataset.team === "__new") {
+      openTeamForm();
+    } else {
+      setTeam(button.dataset.team);
+      refresh();
+    }
+  });
+
+  const form = document.querySelector(".search-form");
+  const input = form.querySelector("input");
+  input.value = new URLSearchParams(location.search).get("q") || "";
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    // pages without their own search send you to the Expenses page
+    if (!onSearch)
+      location.href =
+        pagesPath + "expenses.html?q=" + encodeURIComponent(input.value);
+  });
+
+  if (onSearch) {
+    input.addEventListener("input", () => onSearch(input.value));
+  }
+  refresh();
+}
+
+// ---------- 8. FORMS (expense/claim, payment, member) ----------
+
+// Needs a team. If there isn't one, tell the user.
+function needTeam() {
+  const team = getTeam();
+  if (!team) showNotification("Create a team first.", "warning");
+  return team;
+}
+
+// Build <option> tags. items is a list of [value, label] pairs.
+function optionsHtml(items, selectedValue) {
+  let html = "";
+  for (const item of items) {
+    const selected = item[0] === selectedValue ? "selected" : "";
+    html += `<option value="${escapeHtml(item[0])}" ${selected}>${escapeHtml(item[1])}</option>`;
+  }
+  return html;
+}
+
+// ["a", "b"] -> [["a", "a"], ["b", "b"]]
+function pairs(values) {
+  return values.map((v) => [v, v]);
+}
+
+function radioHtml(name, value, label, checked) {
+  return `<input type="radio" class="btn-check" name="${name}" id="${name}-${value}" value="${value}" ${checked ? "checked" : ""}>
+          <label class="btn btn-outline-secondary btn-sm" for="${name}-${value}">${label}</label>`;
+}
+
+// Which radio button is selected? e.g. getChecked("exKind") -> "expense"
+function getChecked(name) {
+  return document.querySelector("[name=" + name + "]:checked").value;
+}
+
+// Ids of the members whose checkbox is ticked
+function getCheckedIds() {
+  const ids = [];
+  for (const box of document.querySelectorAll(".who:checked")) {
+    ids.push(box.value);
+  }
+  return ids;
+}
+
+// What the user typed in each person's amount/percent box: { memberId: "text" }
+function getRawValues() {
+  const raw = {};
+  for (const input of document.querySelectorAll(".who-raw")) {
+    raw[input.dataset.id] = input.value;
+  }
+  return raw;
+}
+
+/* ----- 8a. Expense / claim form ----- */
+
+let editingExpense = null; // the expense being edited (null when adding a new one)
+
+// Which exchange rate should we use for this currency?
+function rateFor(currency) {
+  if (currency === "NGN") return 1;
+  if (editingExpense && editingExpense.currency === currency)
+    return editingExpense.rate; // keep the saved rate
+  return getRate(currency);
+}
+
+// One row per member: checkbox, name, amount box, and their calculated share
+function memberRowsHtml(memberList, expense) {
+  let rows = "";
+  for (const m of memberList) {
+    const checked = expense.participants.includes(m.id) ? "checked" : "";
+    const rawValue = expense.raw[m.id] !== undefined ? expense.raw[m.id] : "";
+    rows += `<div class="d-flex align-items-center gap-2 py-1">
+      <input type="checkbox" class="form-check-input who" value="${m.id}" id="who-${m.id}" ${checked}>
+      <label class="flex-grow-1" for="who-${m.id}">${escapeHtml(m.name)}</label>
+      <input type="number" step="0.01" class="form-control form-control-sm who-raw" data-id="${m.id}" style="width:90px" value="${rawValue}" aria-label="${escapeHtml(m.name)} value">
+      <span class="who-share small fw-semibold text-end" data-id="${m.id}" style="min-width:90px"></span>
+    </div>`;
+  }
+  return rows;
+}
+
+function expenseFormHtml(e, memberList) {
+  const memberOptions = memberList.map((m) => [m.id, m.name]);
+  return `
+    <div class="btn-group w-100 mb-2">${radioHtml("exKind", "expense", "Expense", e.kind === "expense")}${radioHtml("exKind", "claim", "Reimbursement claim", e.kind === "claim")}</div>
+    <label class="form-label small mb-1" for="exTitle">Title / purpose</label>
+    <input class="form-control mb-2" id="exTitle" maxlength="80" value="${escapeHtml(e.title)}">
+    <div class="row g-2">
+      <div class="col-7"><label class="form-label small mb-1" for="exAmount">Amount</label>
+        <input class="form-control" id="exAmount" type="number" step="0.01" min="0" inputmode="decimal" value="${e.originalAmount}"></div>
+      <div class="col-5"><label class="form-label small mb-1" for="exCurrency">Currency</label>
+        <select class="form-select" id="exCurrency">${optionsHtml(pairs(CURRENCIES), e.currency)}</select></div>
+    </div>
+    <div id="exRateInfo" class="small text-secondary my-1"></div>
+    <div class="row g-2 mb-2">
+      <div class="col-6"><label class="form-label small mb-1" for="exDate">Date</label>
+        <input class="form-control" id="exDate" type="date" value="${e.date}"></div>
+      <div class="col-6"><label class="form-label small mb-1" for="exCategory">Category</label>
+        <select class="form-select" id="exCategory">${optionsHtml(pairs(CATEGORIES), e.category)}</select></div>
+    </div>
+    <label class="form-label small mb-1" for="exPayer">Paid by / claimed by</label>
+    <select class="form-select mb-2" id="exPayer">${optionsHtml(memberOptions, e.payerId)}</select>
+    <div class="btn-group w-100 mb-2">${radioHtml("exSplit", "equal", "Equal", e.split === "equal")}${radioHtml("exSplit", "exact", "Exact amounts", e.split === "exact")}${radioHtml("exSplit", "percent", "Percentage", e.split === "percent")}</div>
+    ${memberRowsHtml(memberList, e)}
+    <div id="exSumLine" class="small text-secondary mt-1"></div>`;
+}
+
+// Pass an expense id to edit it, or nothing to add a new one
+function openExpenseForm(id) {
+  const team = needTeam();
+  if (!team) return;
+
+  const activeMembers = membersOf(team);
+  if (activeMembers.length === 0) {
+    showNotification("Add team members first (Team Members page).", "warning");
+    return;
+  }
+
+  editingExpense = state.data.expenses.find((e) => e.id === id) || null;
+
+  // starting values for the form
+  let expense = editingExpense;
+  if (!expense) {
+    expense = {
+      kind: "expense",
+      title: "",
+      originalAmount: "",
+      currency: "NGN",
+      date: today(),
+      category: CATEGORIES[0],
+      payerId: activeMembers[0].id,
+      split: "equal",
+      participants: activeMembers.map((m) => m.id),
+      raw: {},
+    };
+  }
+  if (!expense.raw) expense.raw = {};
+
+  // show archived members only if this expense already uses them
+  const memberList = membersOf(team, true).filter(
+    (m) =>
+      m.active !== false ||
+      expense.participants.includes(m.id) ||
+      m.id === expense.payerId,
+  );
+
+  const body = openModal({
+    title: editingExpense ? "Edit expense" : "Record expense or claim",
+    size: "modal-lg",
+    okText: "Save",
+    body: expenseFormHtml(expense, memberList),
+    onSubmit: saveExpense,
+  });
+
+  body.oninput = updateExpensePreview;
+  updateExpensePreview();
+  // get the exchange rates, then refresh the preview if the form is still open
+  loadRates().then(function () {
+    if (getEl("exAmount")) updateExpensePreview();
+  });
+}
+
+// Read everything the user typed. Returns { error } if something is missing.
+function readExpenseForm() {
+  const title = getEl("exTitle").value.trim();
+  const original = parseFloat(getEl("exAmount").value);
+  if (!title) return { error: "Title cannot be empty." };
+  if (!(original > 0)) return { error: "Amount must be greater than 0." };
+  if (!getEl("exDate").value) return { error: "Pick a date." };
+
+  return {
+    title: title,
+    original: original,
+    ids: getCheckedIds(),
+    raw: getRawValues(),
+    kind: getChecked("exKind"),
+    currency: getEl("exCurrency").value,
+    date: getEl("exDate").value,
+    category: getEl("exCategory").value,
+    payerId: getEl("exPayer").value,
+    split: getChecked("exSplit"),
+  };
+}
+
+// Runs when the user clicks Save
+function saveExpense() {
+  const team = getTeam();
+  const form = readExpenseForm();
+  if (form.error) return form.error;
+
+  const rate = rateFor(form.currency);
+  if (!rate)
+    return (
+      "No exchange rate for " + form.currency + ". Go online once or use NGN."
+    );
+
+  const amount = Math.round((form.original * 100) / rate); // amount in kobo
+  const result = splitExpense(
+    form.split,
+    amount,
+    form.original,
+    form.currency,
+    form.ids,
+    form.raw,
+  );
+  if (result.error) return result.error;
+
+  // Expenses are approved straight away. New claims wait for approval.
+  let status = "pending";
+  if (form.kind === "expense") status = "approved";
+  else if (editingExpense && editingExpense.kind === "claim")
+    status = editingExpense.status;
+
+  const record = {
+    id: editingExpense ? editingExpense.id : createId(),
+    teamId: team.id,
+    kind: form.kind,
+    status: status,
+    title: form.title,
+    category: form.category,
+    date: form.date,
+    payerId: form.payerId,
+    originalAmount: form.original,
+    currency: form.currency,
+    rate: rate,
+    amount: amount,
+    split: form.split,
+    participants: form.ids,
+    raw: form.raw,
+    shares: result.shares,
+  };
+
+  if (editingExpense)
+    Object.assign(editingExpense, record); // update in place
+  else state.data.expenses.push(record);
+
+  const verb = editingExpense ? "Updated" : "Added";
+  logActivity(
+    team,
+    verb + " " + form.kind + " “" + form.title + "” · " + formatMoney(amount),
+  );
+  commit();
+  refresh();
+
+  if (form.kind === "claim" && status === "pending")
+    showNotification("Claim submitted for approval.");
+  else showNotification("Expense saved.");
+}
+
+// Live preview inside the form: converted amount + each person's share
+function updateExpensePreview() {
+  const currency = getEl("exCurrency").value;
+  const split = getChecked("exSplit");
+  const amount = parseFloat(getEl("exAmount").value) || 0;
+  const rate = rateFor(currency);
+  const totalKobo = rate ? Math.round((amount * 100) / rate) : 0;
+
+  // only show the amount/percent boxes when the split is not equal
+  for (const input of document.querySelectorAll(".who-raw")) {
+    input.style.display = split === "equal" ? "none" : "";
+  }
+
+  // exchange rate message
+  let rateText = "";
+  if (currency !== "NGN" && rate) {
+    rateText =
+      "≈ " +
+      formatMoney(totalKobo) +
+      " (1 " +
+      currency +
+      " = " +
+      formatMoney(100 / rate) +
+      "; rate is saved with the expense)";
+  } else if (currency !== "NGN") {
+    rateText =
+      "No rate available for " + currency + " – check your connection.";
+  }
+  setText("exRateInfo", rateText);
+
+  // each person's share
+  const result = splitExpense(
+    split,
+    totalKobo,
+    amount,
+    currency,
+    getCheckedIds(),
+    getRawValues(),
+  );
+  for (const span of document.querySelectorAll(".who-share")) {
+    const share = result.shares ? result.shares[span.dataset.id] : undefined;
+    span.textContent = share !== undefined ? formatMoney(share) : "";
+  }
+
+  // message under the list
+  let sumText = "Shares add up to the total ✔";
+  if (result.error) sumText = amount ? result.error : "";
+  setText("exSumLine", sumText);
+}
+
+/* ----- 8b. Payment form ----- */
+
+// Pass { from, to, amount } to pre-fill the form (used by Settle Up)
+function openPaymentForm(prefill = {}) {
+  const team = needTeam();
+  if (!team) return;
+
+  const members = membersOf(team);
+  if (members.length < 2) {
+    showNotification(
+      "You need at least two members to record a payment.",
+      "warning",
+    );
+    return;
+  }
+
+  const names = makeNameLookup(members);
+  const memberOptions = members.map((m) => [m.id, m.name]);
+  const fromId = prefill.from || members[0].id;
+  const toId = prefill.to || members[1].id;
+  const amountText = prefill.amount ? prefill.amount / 100 : "";
+
+  openModal({
+    title: "Record a payment",
+    okText: "Record payment",
+    body: `
+      <label class="form-label small mb-1" for="payFrom">Paid by</label>
+      <select class="form-select mb-2" id="payFrom">${optionsHtml(memberOptions, fromId)}</select>
+      <label class="form-label small mb-1" for="payTo">Paid to</label>
+      <select class="form-select mb-2" id="payTo">${optionsHtml(memberOptions, toId)}</select>
+      <label class="form-label small mb-1" for="payAmount">Amount (NGN)</label>
+      <input class="form-control mb-2" id="payAmount" type="number" step="0.01" min="0" value="${amountText}">
+      <label class="form-label small mb-1" for="payDate">Date</label>
+      <input class="form-control mb-2" id="payDate" type="date" value="${today()}">
+      <label class="form-label small mb-1" for="payNote">Note (optional)</label>
+      <input class="form-control" id="payNote" maxlength="80">`,
+    onSubmit: function () {
+      const from = getEl("payFrom").value;
+      const to = getEl("payTo").value;
+      const amount = Math.round(parseFloat(getEl("payAmount").value) * 100);
+
+      if (from === to) return "Payer and receiver must be different people.";
+      if (!(amount > 0)) return "Amount must be greater than 0.";
+
+      state.data.payments.push({
+        id: createId(),
+        teamId: team.id,
+        from: from,
+        to: to,
+        amount: amount,
+        date: getEl("payDate").value || today(),
+        note: getEl("payNote").value.trim(),
+      });
+      logActivity(
+        team,
+        names[from] + " paid " + names[to] + " " + formatMoney(amount),
+      );
+      commit();
+      refresh();
+      showNotification("Payment recorded.");
+    },
+  });
+}
+
+/* ----- 8c. Member form ----- */
+
+// Pass a member to edit them, or nothing to add a new one
+function openMemberForm(member) {
+  const team = needTeam();
+  if (!team) return;
+
+  openModal({
+    title: member ? "Edit member" : "Add member",
+    body: `
+      <label class="form-label small mb-1" for="memName">Name</label>
+      <input class="form-control mb-2" id="memName" maxlength="40" value="${escapeHtml(member ? member.name : "")}">
+      <label class="form-label small mb-1" for="memRole">Role (optional)</label>
+      <input class="form-control" id="memRole" maxlength="40" value="${escapeHtml(member && member.role ? member.role : "")}">`,
+    onSubmit: function () {
+      const name = getEl("memName").value.trim();
+      const role = getEl("memRole").value.trim();
+      if (!name) return "Name cannot be empty.";
+
+      // no two members with the same name
+      const nameTaken = membersOf(team).some(
+        (m) => m !== member && m.name.toLowerCase() === name.toLowerCase(),
+      );
+      if (nameTaken) return "A member with this name already exists.";
+
+      if (member) {
+        member.name = name;
+        member.role = role;
+      } else {
+        state.data.members.push({
+          id: createId(),
+          teamId: team.id,
+          name: name,
+          role: role,
+          active: true,
+        });
+        logActivity(team, "Added member " + name);
+      }
+      commit();
+      refresh();
+    },
+  });
+}
+
+// Members who still owe (or are owed) money can't be removed. Everyone else is "archived".
+function removeMember(id) {
+  const team = getTeam();
+  const member = state.data.members.find((m) => m.id === id);
+  const balances = teamBalances(team);
+  const net = balances[id] ? balances[id].net : 0;
+
+  if (net !== 0) {
+    const situation = net > 0 ? "is still owed" : "still owes";
+    openModal({
+      title: "Cannot remove member",
+      body: `<p class="mb-0"><b>${escapeHtml(member.name)}</b> ${situation} <b>${formatMoney(Math.abs(net))}</b>. Record a payment first, then remove them.</p>`,
+    });
+    return;
+  }
+
+  confirmDialog(
+    "Remove " +
+      escapeHtml(member.name) +
+      "? Their past expenses stay in the history.",
+    function () {
+      member.active = false;
+      commit();
+      refresh();
+    },
+    "Remove",
+  );
+}
+
+// ---------- 9. DASHBOARD PAGE (index.html) ----------
+
+let viewMonth = monthOf(today()); // "2026-10" or "all"
 let spendingChart = null;
 let memberChart = null;
 
-function greeting(name) {
+function greeting() {
   const hour = new Date().getHours();
-  let timeOfDay = "evening";
-  if (hour < 12) {
-    timeOfDay = "morning";
-  } else if (hour < 17) {
-    timeOfDay = "afternoon";
-  }
-  return "Good " + timeOfDay + ", " + name;
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
 }
 
+// "2026-01" -> "2025-12"
 function previousMonth(monthKey) {
   const parts = monthKey.split("-");
-  const year = Number(parts[0]);
-  const month = Number(parts[1]);
-  const date = new Date(year, month - 2, 1);
-  return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0");
+  const date = new Date(Number(parts[0]), Number(parts[1]) - 2, 1);
+  return (
+    date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0")
+  );
 }
 
-function totalOf(expenses) {
-  return expenses.reduce((total, expense) => total + expense.amount, 0);
-}
-
-function inMonth(expenses, month) {
-  return expenses.filter((expense) => monthOf(expense.date) === month);
-}
-
-function updateSpendingChange(approved, periodTotal) {
-  const badge = byId("spendingChange");
-  if (!badge) return;
+// The small badge: "▲ 10% vs last month"
+function showSpendingChange(approved, periodTotal) {
+  const badge = getEl("spendingChange");
 
   if (viewMonth === "all") {
     badge.textContent = "All-time total";
@@ -73,71 +1082,62 @@ function updateSpendingChange(approved, periodTotal) {
     return;
   }
 
-  const lastMonthTotal = totalOf(inMonth(approved, previousMonth(viewMonth)));
-  if (!lastMonthTotal) {
+  const lastMonth = approved.filter(
+    (e) => monthOf(e.date) === previousMonth(viewMonth),
+  );
+  const lastTotal = sumAmounts(lastMonth);
+  if (lastTotal === 0) {
     badge.textContent = "No data last month";
     badge.className = "small-badge green-badge";
     return;
   }
 
-  const percent = Math.round(((periodTotal - lastMonthTotal) / lastMonthTotal) * 100);
+  const percent = Math.round(((periodTotal - lastTotal) / lastTotal) * 100);
   let arrow = "";
   if (percent > 0) arrow = "▲ ";
   if (percent < 0) arrow = "▼ ";
-
   badge.textContent = arrow + Math.abs(percent) + "% vs last month";
-  badge.className = "small-badge " + (percent > 0 ? "orange-badge" : "green-badge");
+  badge.className =
+    "small-badge " + (percent > 0 ? "orange-badge" : "green-badge");
 }
 
-function renderRecentActivity(team) {
-  const recentActivity = byId("recentActivity");
-  if (!recentActivity) return;
-
+function showRecentActivity(team) {
   const recent = state.data.activities
-    .filter((activity) => team && activity.teamId === team.id)
+    .filter((a) => team && a.teamId === team.id)
     .slice(0, 6);
-
-  if (recent.length === 0) {
-    recentActivity.innerHTML = '<div class="empty-state">No activity yet. Add the first expense or claim.</div>';
-    return;
+  let html = "";
+  for (const activity of recent) {
+    const when = new Date(activity.at).toLocaleString("en-NG", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    html += `<div class="row-item"><div class="row-main small">${escapeHtml(activity.text)}</div><small class="text-secondary">${when}</small></div>`;
   }
-
-  recentActivity.innerHTML = recent
-    .map((activity) => {
-      const when = new Date(activity.at).toLocaleString("en-NG", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
-      return `
-        <div class="row-item">
-          <div class="row-main small">${escapeHtml(activity.text)}</div>
-          <small class="text-secondary">${when}</small>
-        </div>`;
-    })
-    .join("");
+  if (html === "")
+    html = `<div class="empty-state">No activity yet. Add the first expense or claim.</div>`;
+  getEl("recentActivity").innerHTML = html;
 }
 
-function drawCharts(inView, members) {
-  if (typeof Chart === "undefined") return;
-
-  const totals = {};
+// Doughnut chart: spending by category
+function drawCategoryChart(inView) {
+  const totals = {}; // { category: kobo }
   for (const expense of inView) {
-    totals[expense.category] = (totals[expense.category] ?? 0) + expense.amount;
+    totals[expense.category] = (totals[expense.category] || 0) + expense.amount;
   }
-
   const categories = Object.keys(totals);
-  const categoryTotals = { ...totals };
-  const colours = categories.map((_, index) => CHART_COLOURS[index % CHART_COLOURS.length]);
+  const colors = categories.map(
+    (c, i) => CHART_COLORS[i % CHART_COLORS.length],
+  );
 
   if (spendingChart) spendingChart.destroy();
-  spendingChart = new Chart(byId("spendingCategoryChart"), {
+  spendingChart = new Chart(getEl("spendingCategoryChart"), {
     type: "doughnut",
     data: {
       labels: categories,
       datasets: [
         {
-          data: categories.map((category) => categoryTotals[category] / 100),
-          backgroundColor: colours,
+          data: categories.map((c) => totals[c] / 100),
+          backgroundColor: colors,
           borderWidth: 0,
           hoverOffset: 5,
         },
@@ -151,58 +1151,53 @@ function drawCharts(inView, members) {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: (context) => `${context.label}: ${formatMoney(context.raw * 100)}`,
+            label: (item) => item.label + ": " + formatMoney(item.raw * 100),
           },
         },
       },
     },
   });
 
+  // the legend under the chart
   let legend = "";
-  if (categories.length === 0) {
-    legend = '<div class="text-secondary small">No spending in this period.</div>';
-  } else {
-    legend = categories
-      .map(
-        (category, index) =>
-          `<div class="legend-item"><span class="legend-dot" style="background:${colours[index]}"></span><span class="legend-name">${escapeHtml(category)}</span><span class="legend-value">${formatMoney(categoryTotals[category])}</span></div>`,
-      )
-      .join("");
+  for (let i = 0; i < categories.length; i++) {
+    legend += `<div class="legend-item"><span class="legend-dot" style="background:${colors[i]}"></span><span class="legend-name">${escapeHtml(categories[i])}</span><span class="legend-value">${formatMoney(totals[categories[i]])}</span></div>`;
   }
-  byId("categoryLegend").innerHTML = legend;
+  if (legend === "")
+    legend = `<div class="text-secondary small">No spending in this period.</div>`;
+  getEl("categoryLegend").innerHTML = legend;
+}
 
+// Bar chart: what each member paid vs their share
+function drawMemberChart(inView, members) {
   const paid = {};
   const share = {};
   for (const expense of inView) {
-    paid[expense.payerId] = (paid[expense.payerId] ?? 0) + expense.amount;
-    for (const memberId in expense.shares) {
-      share[memberId] = (share[memberId] ?? 0) + expense.shares[memberId];
+    paid[expense.payerId] = (paid[expense.payerId] || 0) + expense.amount;
+    for (const id in expense.shares) {
+      share[id] = (share[id] || 0) + expense.shares[id];
     }
   }
 
-  const shownMembers = members.filter(
-    (member) => member.active !== false || paid[member.id] || share[member.id],
+  const shown = members.filter(
+    (m) => m.active !== false || paid[m.id] || share[m.id],
   );
 
-  const names = shownMembers.map((member) => member.name);
-  const paidData = shownMembers.map((member) => (paid[member.id] ?? 0) / 100);
-  const shareData = shownMembers.map((member) => (share[member.id] ?? 0) / 100);
-
   if (memberChart) memberChart.destroy();
-  memberChart = new Chart(byId("memberContributionChart"), {
+  memberChart = new Chart(getEl("memberContributionChart"), {
     type: "bar",
     data: {
-      labels: names,
+      labels: shown.map((m) => m.name),
       datasets: [
         {
           label: "Paid / Claimed",
-          data: paidData,
+          data: shown.map((m) => (paid[m.id] || 0) / 100),
           backgroundColor: "#172554",
           borderRadius: 3,
         },
         {
           label: "Allocated Share",
-          data: shareData,
+          data: shown.map((m) => (share[m.id] || 0) / 100),
           backgroundColor: "#047857",
           borderRadius: 3,
         },
@@ -219,7 +1214,8 @@ function drawCharts(inView, members) {
         },
         tooltip: {
           callbacks: {
-            label: (context) => `${context.dataset.label}: ${formatMoney(context.raw * 100)}`,
+            label: (item) =>
+              item.dataset.label + ": " + formatMoney(item.raw * 100),
           },
         },
       },
@@ -238,115 +1234,802 @@ function drawCharts(inView, members) {
   });
 }
 
-function render() {
+function renderDashboard() {
   const team = getTeam();
   const members = team ? membersOf(team, true) : [];
   const allExpenses = team ? expensesOf(team) : [];
-  const approved = allExpenses.filter((expense) => expense.status === "approved");
-  const pending = allExpenses.filter((expense) => expense.status === "pending");
-  const inView = viewMonth === "all" ? approved : inMonth(approved, viewMonth);
+  const approved = allExpenses.filter((e) => e.status === "approved");
+  const pending = allExpenses.filter((e) => e.status === "pending");
+
+  // only the expenses in the month we are viewing
+  let inView = approved;
+  if (viewMonth !== "all")
+    inView = approved.filter((e) => monthOf(e.date) === viewMonth);
 
   const balances = team ? teamBalances(team) : {};
-  const netValues = Object.values(balances).map((balance) => balance.net);
+  const netValues = Object.values(balances).map((b) => b.net);
+  const periodText = viewMonth === "all" ? "All time" : monthLabel(viewMonth);
+  const periodTotal = sumAmounts(inView);
 
-  byId("greetingMessage").textContent = greeting(state.data.settings.userName || "there");
-  byId("teamIntro").textContent = team
-    ? `Here's your team's financial overview for ${team.name}.`
-    : "Create a team to get started.";
-  byId("currentMonth").textContent = viewMonth === "all" ? "All time" : monthLabel(viewMonth);
+  // top of the page
+  setText("greetingMessage", greeting());
+  setText(
+    "teamIntro",
+    team
+      ? "Here's your team's financial overview for " + team.name + "."
+      : "Create a team to get started.",
+  );
+  setText("currentMonth", periodText);
 
-  const noticeArea = byId("dashboardNotice");
-  if (!team) {
-    noticeArea.innerHTML = `
-      <div class="alert alert-info d-flex justify-content-between align-items-center mb-0">
-        Create your first team to start tracking petty cash.
-        <button class="btn btn-sm btn-navy" id="noticeBtn" type="button">Create team</button>
-      </div>`;
-    const noticeBtn = byId("noticeBtn");
-    if (noticeBtn) noticeBtn.onclick = () => openTeamForm();
+  // notice when there is no team
+  if (team) {
+    getEl("dashboardNotice").innerHTML = "";
   } else {
-    noticeArea.innerHTML = "";
+    getEl("dashboardNotice").innerHTML =
+      `<div class="alert alert-info d-flex justify-content-between align-items-center mb-0">Create your first team to start tracking petty cash.<button class="btn btn-sm btn-navy" id="noticeBtn" type="button">Create team</button></div>`;
+    getEl("noticeBtn").onclick = () => openTeamForm();
   }
 
-  const periodTotal = totalOf(inView);
-  byId("totalTeamSpending").textContent = formatMoney(periodTotal);
-  byId("spendingPeriod").textContent = viewMonth === "all" ? "All time" : monthLabel(viewMonth);
-  updateSpendingChange(approved, periodTotal);
+  // summary cards
+  setText("totalTeamSpending", formatMoney(periodTotal));
+  setText("spendingPeriod", periodText);
+  showSpendingChange(approved, periodTotal);
 
-  byId("pendingClaims").textContent = formatMoney(totalOf(pending));
-  byId("pendingClaimsCount").textContent = String(pending.length);
-  byId("availablePettyCash").textContent = formatMoney(team ? team.pettyCash : 0);
+  setText("pendingClaims", formatMoney(sumAmounts(pending)));
+  setText("pendingClaimsCount", pending.length);
+  setText("availablePettyCash", formatMoney(team ? team.pettyCash : 0));
 
-  const custodian = team ? members.find((member) => member.id === team.custodianId) : null;
-  byId("pettyCashCustodian").textContent = custodian ? custodian.name : "Not assigned";
+  const custodian = team
+    ? members.find((m) => m.id === team.custodianId)
+    : null;
+  setText("pettyCashCustodian", custodian ? custodian.name : "Not assigned");
 
-  byId("membersToSettle").textContent = String(netValues.filter((n) => n !== 0).length);
-  const totalDebt = netValues.filter((n) => n < 0).reduce((sum, n) => sum - n, 0);
-  byId("settlementBalance").textContent = `${formatMoney(totalDebt)} to balance`;
+  let membersToSettle = 0;
+  let totalDebt = 0;
+  let imbalance = 0;
+  for (const net of netValues) {
+    if (net !== 0) membersToSettle++;
+    if (net < 0) totalDebt = totalDebt - net;
+    imbalance = imbalance + net;
+  }
+  setText("membersToSettle", membersToSettle);
+  setText("settlementBalance", formatMoney(totalDebt) + " to balance");
 
-  const imbalance = netValues.reduce((sum, n) => sum + n, 0);
-  byId("auditBalance").textContent = formatMoney(imbalance);
-  byId("auditTitle").innerHTML = `${imbalance === 0 ? "Ledger balanced" : "Ledger out of balance"} <span>•</span>`;
+  // audit banner (firstChild is the text before the little dot)
+  setText("auditBalance", formatMoney(imbalance));
+  getEl("auditTitle").firstChild.textContent =
+    imbalance === 0 ? "Ledger balanced " : "Ledger out of balance ";
 
-  byId("chartTotalSpending").textContent = formatMoney(periodTotal);
-  byId("chartExpenseCount").textContent = `${inView.length} expense${inView.length === 1 ? "" : "s"}`;
+  // charts
+  setText("chartTotalSpending", formatMoney(periodTotal));
+  setText(
+    "chartExpenseCount",
+    inView.length + (inView.length === 1 ? " expense" : " expenses"),
+  );
+  if (typeof Chart !== "undefined") {
+    // (Chart is the Chart.js library loaded in index.html)
+    drawCategoryChart(inView);
+    drawMemberChart(inView, members);
+  }
 
-  drawCharts(inView, members);
-  renderRecentActivity(team);
+  showRecentActivity(team);
 }
 
-byId("addExpenseBtn")?.addEventListener("click", () => openExpenseForm());
-byId("recordPaymentBtn")?.addEventListener("click", () => openPaymentForm());
-byId("filtersBtn")?.addEventListener(
-  "click",
-  () => {
-    location.href = `${pagesPath}expenses.html`;
-  },
-);
-byId("auditSheetBtn")?.addEventListener(
-  "click",
-  () => {
-    location.href = `${pagesPath}balances.html`;
-  },
-);
-byId("adjustRulesBtn")?.addEventListener(
-  "click",
-  () => {
-    location.href = `${pagesPath}members.html`;
-  },
-);
-byId("dateFilterBtn")?.addEventListener("click", function () {
+// "Choose period" pop-up
+function openPeriodPicker() {
   const team = getTeam();
   const months = [monthOf(today())];
-
   if (team) {
     for (const expense of expensesOf(team)) {
       const month = monthOf(expense.date);
       if (!months.includes(month)) months.push(month);
     }
   }
-
   months.sort().reverse();
-  const keys = ["all", ...months];
 
-  const optionTags = keys
-    .map((key) => {
-      const label = key === "all" ? "All time" : monthLabel(key);
-      const selected = key === viewMonth ? "selected" : "";
-      return `<option value="${key}" ${selected}>${label}</option>`;
-    })
-    .join("");
+  let optionTags = `<option value="all" ${viewMonth === "all" ? "selected" : ""}>All time</option>`;
+  for (const month of months) {
+    optionTags += `<option value="${month}" ${month === viewMonth ? "selected" : ""}>${monthLabel(month)}</option>`;
+  }
 
   openModal({
     title: "Choose period",
     okText: "Apply",
     body: `<select class="form-select" id="monthPick" aria-label="Period">${optionTags}</select>`,
-    onSubmit() {
-      viewMonth = byId("monthPick").value;
-      render();
+    onSubmit: function () {
+      viewMonth = getEl("monthPick").value;
+      renderDashboard();
     },
   });
-});
+}
 
-initPage({ onRender: render });
+function startDashboard() {
+  getEl("addExpenseBtn").addEventListener("click", () => openExpenseForm());
+  getEl("recordPaymentBtn").addEventListener("click", () => openPaymentForm());
+  getEl("filtersBtn").addEventListener(
+    "click",
+    () => (location.href = pagesPath + "expenses.html"),
+  );
+  getEl("auditSheetBtn").addEventListener(
+    "click",
+    () => (location.href = pagesPath + "balances.html"),
+  );
+  getEl("adjustRulesBtn").addEventListener(
+    "click",
+    () => (location.href = pagesPath + "members.html"),
+  );
+  getEl("dateFilterBtn").addEventListener("click", openPeriodPicker);
+  initPage(renderDashboard);
+}
 
+// ---------- 10. EXPENSES & CLAIMS PAGE ----------
+
+const expenseFilters = {
+  q: new URLSearchParams(location.search).get("q") || "",
+  member: "",
+  category: "",
+  month: "",
+  status: "",
+};
+
+function claimBadge(expense) {
+  if (expense.kind !== "claim") return "";
+  let color = "text-bg-warning";
+  if (expense.status === "approved") color = "badge-pos";
+  if (expense.status === "rejected") color = "badge-neg";
+  return `<span class="badge ${color}">Claim · ${expense.status}</span>`;
+}
+
+function reviewButtons(expense) {
+  const approve = `<button class="btn btn-sm btn-link p-0" data-action="approve" data-id="${expense.id}">Approve</button> `;
+  const reject = `<button class="btn btn-sm btn-link text-danger p-0" data-action="reject" data-id="${expense.id}">Reject</button> `;
+  if (expense.status === "pending") return approve + reject;
+  if (expense.status === "rejected") return approve;
+  return "";
+}
+
+function expenseRowHtml(expense, names) {
+  const payerName = names[expense.payerId] || "Unknown";
+  const paidWord = expense.kind === "claim" ? "Claimed" : "Paid";
+  let foreign = "";
+  if (expense.currency !== "NGN")
+    foreign =
+      " · " + formatMoney(expense.originalAmount * 100, expense.currency);
+
+  return `<div class="row-item"><div class="row-icon"><i class="bi bi-receipt"></i></div>
+    <div class="row-main">
+      <div class="fw-semibold text-truncate">${escapeHtml(expense.title)} ${claimBadge(expense)}</div>
+      <div class="small text-secondary">${escapeHtml(expense.category)} · ${paidWord} by ${escapeHtml(payerName)} · ${formatDate(expense.date)} · ${expense.split} split${foreign}</div>
+    </div>
+    <div class="text-end"><b>${formatMoney(expense.amount)}</b>
+      <div>${reviewButtons(expense)}<button class="btn btn-sm btn-link p-0" data-action="edit" data-id="${expense.id}"></button>
+        <span class="badge rounded-pill balance-badge p-2" data-action="delete" data-id="${expense.id}">Settled</span></div>
+    </div></div>`;
+}
+
+// Does this expense pass the filters?
+function expenseMatches(expense) {
+  const search = expenseFilters.q.toLowerCase();
+  if (expenseFilters.member) {
+    const isPayer = expense.payerId === expenseFilters.member;
+    const hasShare = expense.shares[expenseFilters.member] !== undefined;
+    if (!isPayer && !hasShare) return false;
+  }
+  if (expenseFilters.category && expense.category !== expenseFilters.category)
+    return false;
+  if (expenseFilters.month && monthOf(expense.date) !== expenseFilters.month)
+    return false;
+  if (expenseFilters.status && expense.status !== expenseFilters.status)
+    return false;
+  if (search && !expense.title.toLowerCase().includes(search)) return false;
+  return true;
+}
+
+// One filter dropdown
+function filterSelect(key, allLabel, options) {
+  const selectedOptions = options.map(
+    (o) =>
+      `<option value="${escapeHtml(o[0])}" ${expenseFilters[key] === o[0] ? "selected" : ""}>${escapeHtml(o[1])}</option>`,
+  );
+  return `<div><select class="form-select form-select-sm" data-filter="${key}" aria-label="${allLabel}">
+    <option value="">${allLabel}</option>${selectedOptions.join("")}</select></div>`;
+}
+
+function renderExpensesPage() {
+  const el = getEl("pageContent");
+  const team = getTeam();
+  if (!team) return renderNoTeam(el);
+
+  const members = membersOf(team, true);
+  const names = makeNameLookup(members);
+  const allExpenses = expensesOf(team);
+  const shown = allExpenses
+    .filter(expenseMatches)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  // months that have expenses, newest first
+  const months = [...new Set(allExpenses.map((e) => monthOf(e.date)))]
+    .sort()
+    .reverse();
+
+  const memberOptions = members.map((m) => [m.id, m.name]);
+  const monthOptions = months.map((m) => [m, monthLabel(m)]);
+  const statusOptions = [
+    ["approved", "Approved"],
+    ["pending", "Pending"],
+    ["rejected", "Rejected"],
+  ];
+
+  let list = "";
+  for (const expense of shown) {
+    list += expenseRowHtml(expense, names);
+  }
+  if (shown.length === 0) {
+    const message =
+      allExpenses.length > 0
+        ? "No expenses match these filters."
+        : "No expenses yet. Add the first claim or bill for this team.";
+    list = `<div class="empty-state"><i class="bi bi-receipt"></i>${message}</div>`;
+  }
+
+  el.innerHTML =
+    heading(
+      "Expenses & claims",
+      `<button class="btn btn-navy" data-action="add"><i class="bi bi-plus-lg"></i> Add expense or claim</button>`,
+    ) +
+    `<div class="panel">
+    <div class="expensesFilter">
+       ${filterSelect("category", "All categories", pairs(CATEGORIES))}
+       ${filterSelect("month", "All months", monthOptions)}
+       ${filterSelect("status", "Any status", statusOptions)}
+     </div>
+     </div>
+     <div class="panel">${list}</div>`;
+}
+
+// Approve or reject a claim
+function setExpenseStatus(id, status) {
+  const expense = state.data.expenses.find((e) => e.id === id);
+  expense.status = status;
+  logActivity(getTeam(), "Claim “" + expense.title + "” " + status);
+  commit();
+  refresh();
+}
+
+function startExpensesPage() {
+  const el = getEl("pageContent");
+  onAction(el, {
+    add: () => openExpenseForm(),
+    edit: (data) => openExpenseForm(data.id),
+    approve: (data) => setExpenseStatus(data.id, "approved"),
+    reject: (data) => setExpenseStatus(data.id, "rejected"),
+    delete: function (data) {
+      confirmDialog("Delete this expense? Balances will update.", function () {
+        state.data.expenses = state.data.expenses.filter(
+          (e) => e.id !== data.id,
+        );
+        commit();
+        refresh();
+      });
+    },
+  });
+
+  // when a filter dropdown changes
+  el.addEventListener("change", function (event) {
+    const key = event.target.dataset.filter;
+    if (key) {
+      expenseFilters[key] = event.target.value;
+      renderExpensesPage();
+    }
+  });
+
+  initPage(renderExpensesPage, function (text) {
+    expenseFilters.q = text;
+    renderExpensesPage();
+  });
+}
+
+// ---------- 11. TEAM BALANCES PAGE ----------
+
+// "+₦500.00" for positive numbers
+function signedMoney(amount) {
+  return (amount > 0 ? "+" : "") + formatMoney(amount);
+}
+
+function balanceSummaryCard(label, value, cssClass = "") {
+  return `<div class="col-12 col-md-4"><div class="panel mb-0">
+    <small class="text-secondary">${label}</small>
+    <div class="fs-5 fw-bold ${cssClass}">${formatMoney(value)}</div></div></div>`;
+}
+
+function balanceRowHtml(member, row) {
+  let netClass = "";
+  if (row.net > 0) netClass = "pos";
+  if (row.net < 0) netClass = "neg";
+  return `<tr>
+    <td><b>${escapeHtml(member.name)}</b><div class="small text-secondary">${escapeHtml(member.role || "")}</div></td>
+    <td class="text-end">${formatMoney(row.paid)}</td>
+    <td class="text-end">${formatMoney(row.share)}</td>
+    <td class="text-end">${formatMoney(row.settled)}</td>
+    <td class="text-end ${netClass}">${signedMoney(row.net)}</td>
+    <td>${balanceBadge(row.net)}</td>
+  </tr>`;
+}
+
+function renderBalancesPage() {
+  const el = getEl("pageContent");
+  const team = getTeam();
+  if (!team) return renderNoTeam(el);
+
+  const balances = teamBalances(team);
+
+  // active members, plus archived ones who still owe or are owed money
+  const members = membersOf(team, true).filter(
+    (m) => m.active !== false || balances[m.id].net !== 0,
+  );
+
+  let totalOwed = 0;
+  let totalOwes = 0;
+  for (const member of members) {
+    const net = balances[member.id].net;
+    if (net > 0) totalOwed = totalOwed + net;
+    if (net < 0) totalOwes = totalOwes - net;
+  }
+
+  let table = `<div class="empty-state"><i class="bi bi-people"></i>No members yet. Add your team first.</div>`;
+  if (members.length > 0) {
+    let rows = "";
+    for (const member of members) {
+      rows += balanceRowHtml(member, balances[member.id]);
+    }
+    table = `<table class="table align-middle mb-0"><thead><tr>
+      <th>Member</th><th class="text-end">Paid / claimed</th><th class="text-end">Share</th>
+      <th class="text-end">Settled</th><th class="text-end">Net</th><th>Status</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  el.innerHTML =
+    heading(
+      "Team balances",
+      `<button class="btn btn-navy" data-action="settle">Settle up</button>`,
+    ) +
+    `<div class="row g-3 mb-3">
+       ${balanceSummaryCard("Owed to members", totalOwed, "pos")}
+       ${balanceSummaryCard("Outstanding debts", totalOwes, "neg")}
+       ${balanceSummaryCard("Net total", totalOwed - totalOwes)}
+     </div>
+     <div class="panel table-responsive">${table}</div>`;
+}
+
+function startBalancesPage() {
+  onAction(getEl("pageContent"), {
+    settle: () => (location.href = pagesPath + "settle-up.html"),
+  });
+  initPage(renderBalancesPage);
+}
+
+// ---------- 12. SETTLE UP PAGE ----------
+
+let settlePlan = []; // the suggested payments
+
+function settleRowHtml(payment, index, names) {
+  return `<div class="row-item">
+    <div class="row-icon">${index + 1}</div>
+    <div class="row-main"><b>${escapeHtml(names[payment.from])}</b> pays <b>${escapeHtml(names[payment.to])}</b></div>
+    <b>${formatMoney(payment.amount)}</b>
+    <button class="btn btn-sm btn-navy" data-action="record" data-i="${index}">Record</button>
+  </div>`;
+}
+
+function renderSettleUpPage() {
+  const el = getEl("pageContent");
+  const team = getTeam();
+  if (!team) return renderNoTeam(el);
+
+  const names = makeNameLookup(membersOf(team, true));
+  settlePlan = createSettlementPlan(teamBalances(team));
+
+  let body = `<div class="empty-state"><i class="bi bi-check-circle"></i>All settled. Nobody owes anything.</div>`;
+  if (settlePlan.length > 0) {
+    const plural = settlePlan.length > 1 ? "s" : "";
+    body = `<p class="text-secondary small">${settlePlan.length} payment${plural} clear every debt.</p>`;
+    for (let i = 0; i < settlePlan.length; i++) {
+      body += settleRowHtml(settlePlan[i], i, names);
+    }
+  }
+  el.innerHTML = heading("Settle up") + `<div class="panel">${body}</div>`;
+}
+
+function startSettleUpPage() {
+  // open the payment form already filled in
+  onAction(getEl("pageContent"), {
+    record: (data) => openPaymentForm(settlePlan[Number(data.i)]),
+  });
+  initPage(renderSettleUpPage);
+}
+
+// ---------- 13. PAYMENTS PAGE ----------
+
+function paymentRowHtml(payment, names) {
+  const note = payment.note ? " · " + escapeHtml(payment.note) : "";
+  return `<div class="row-item"><div class="row-icon"><i class="bi bi-cash-stack"></i></div>
+    <div class="row-main">
+      <div class="fw-semibold">${escapeHtml(names[payment.from])} paid ${escapeHtml(names[payment.to])}</div>
+      <div class="small text-secondary">${formatDate(payment.date)}${note}</div>
+    </div>
+    <div class="text-end"><b class="pos">${formatMoney(payment.amount)}</b>
+      <div><button class="btn btn-sm btn-link text-danger p-0" data-action="delete" data-id="${payment.id}">Delete</button></div>
+    </div></div>`;
+}
+
+function renderPaymentsPage() {
+  const el = getEl("pageContent");
+  const team = getTeam();
+  if (!team) return renderNoTeam(el);
+
+  const names = makeNameLookup(membersOf(team, true));
+  const payments = paymentsOf(team)
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date)); // newest first
+
+  let body = `<div class="empty-state"><i class="bi bi-cash-stack"></i>No payments yet. Record one when someone pays a teammate.</div>`;
+  if (payments.length > 0) {
+    body = "";
+    for (const payment of payments) {
+      body += paymentRowHtml(payment, names);
+    }
+  }
+
+  el.innerHTML =
+    heading(
+      "Payments",
+      `<button class="btn btn-navy" data-action="add"><i class="bi bi-plus-lg"></i> Record payment</button>`,
+    ) + `<div class="panel">${body}</div>`;
+}
+
+function startPaymentsPage() {
+  onAction(getEl("pageContent"), {
+    add: () => openPaymentForm(),
+    delete: function (data) {
+      confirmDialog(
+        "Delete this payment record? Balances will update.",
+        function () {
+          state.data.payments = state.data.payments.filter(
+            (p) => p.id !== data.id,
+          );
+          commit();
+          refresh();
+        },
+      );
+    },
+  });
+  initPage(renderPaymentsPage);
+}
+
+// ---------- 14. TEAM MEMBERS PAGE ----------
+
+function memberRowHtml(member, balances) {
+  const net = balances[member.id] ? balances[member.id].net : 0;
+  return `<div class="row-item">
+    <div class="row-icon">${escapeHtml(initials(member.name))}</div>
+    <div class="row-main"><b>${escapeHtml(member.name)}</b><div class="small text-secondary">${escapeHtml(member.role || "Member")}</div></div>
+    ${balanceBadge(net)}
+    <button class="btn btn-sm btn-outline-secondary" data-action="edit" data-id="${member.id}">Edit</button>
+    <button class="btn btn-sm btn-outline-danger" data-action="remove" data-id="${member.id}">Remove</button>
+  </div>`;
+}
+
+function renderMembersPage() {
+  const el = getEl("pageContent");
+  const team = getTeam();
+  if (!team) return renderNoTeam(el);
+
+  const balances = teamBalances(team);
+  const members = membersOf(team);
+
+  let list = `<div class="empty-state"><i class="bi bi-people"></i>No members yet. Add the first member of this team.</div>`;
+  if (members.length > 0) {
+    list = "";
+    for (const member of members) {
+      list += memberRowHtml(member, balances);
+    }
+  }
+
+  el.innerHTML =
+    heading(
+      "Team members",
+      `<button class="btn btn-navy" data-action="add"><i class="bi bi-person-plus"></i> Add member</button>`,
+    ) +
+    `<div class="panel">${list}</div>
+     <div class="panel d-flex gap-2 flex-wrap align-items-center">
+       <b class="me-auto">${escapeHtml(team.name)}</b>
+       <button class="btn btn-sm btn-outline-secondary" data-action="rename">Rename team</button>
+       <button class="btn btn-sm btn-outline-danger" data-action="deleteTeam">Delete team</button>
+     </div>`;
+}
+
+// Delete the active team and everything that belongs to it
+function deleteActiveTeam() {
+  const teamId = getTeam().id;
+  const data = state.data;
+
+  data.teams = data.teams.filter((t) => t.id !== teamId);
+  data.members = data.members.filter((m) => m.teamId !== teamId);
+  data.expenses = data.expenses.filter((e) => e.teamId !== teamId);
+  data.payments = data.payments.filter((p) => p.teamId !== teamId);
+  data.activities = data.activities.filter((a) => a.teamId !== teamId);
+  data.settings.activeTeamId = null;
+
+  commit();
+  refresh();
+}
+
+function startMembersPage() {
+  onAction(getEl("pageContent"), {
+    add: () => openMemberForm(),
+    edit: (data) =>
+      openMemberForm(state.data.members.find((m) => m.id === data.id)),
+    remove: (data) => removeMember(data.id),
+    rename: () => openTeamForm(getTeam()),
+    deleteTeam: () =>
+      confirmDialog(
+        "Delete this team and all its members, expenses and payments?",
+        deleteActiveTeam,
+      ),
+  });
+  initPage(renderMembersPage);
+}
+
+// ---------- 15. ACTIVITY HISTORY PAGE ----------
+// The layout is in pages/history.html, this code fills it in.
+
+const HISTORY_PAGE_SIZE = 10; // rows per page
+const historyFilters = { q: "", member: "", category: "", month: "" };
+let historyPage = 1;
+
+const STATUS_BADGE = {
+  approved: "badge-pos",
+  rejected: "badge-neg",
+  pending: "text-bg-warning",
+  completed: "badge-pos",
+};
+
+// "approved" -> "Approved"
+function capitalise(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// Put expenses, claims and payments into one list of simple rows
+function buildHistoryRows(team) {
+  const names = makeNameLookup(membersOf(team, true));
+  const rows = [];
+
+  for (const e of expensesOf(team)) {
+    rows.push({
+      date: e.date,
+      type: e.kind === "claim" ? "Claim" : "Expense",
+      title: e.title,
+      memberIds: [e.payerId],
+      member: names[e.payerId] || "Unknown",
+      category: e.category,
+      amount: e.amount,
+      status: e.status,
+    });
+  }
+  for (const p of paymentsOf(team)) {
+    rows.push({
+      date: p.date,
+      type: "Payment",
+      title: p.note || "Payment",
+      memberIds: [p.from, p.to],
+      member: (names[p.from] || "Unknown") + " → " + (names[p.to] || "Unknown"),
+      category: "Settlement",
+      amount: p.amount,
+      status: "completed",
+    });
+  }
+
+  rows.sort((a, b) => b.date.localeCompare(a.date)); // newest first
+  return rows;
+}
+
+// Fill a <select> with options. Keep the current choice if it still exists.
+function fillSelect(id, firstLabel, options, currentValue) {
+  let html = `<option value="">${firstLabel}</option>`;
+  let stillExists = false;
+  for (const option of options) {
+    html += `<option value="${escapeHtml(option[0])}">${escapeHtml(option[1])}</option>`;
+    if (option[0] === currentValue) stillExists = true;
+  }
+  getEl(id).innerHTML = html;
+  getEl(id).value = stillExists ? currentValue : "";
+}
+
+// Does a row pass the filters?
+function historyRowMatches(row) {
+  const search = historyFilters.q.trim().toLowerCase();
+  if (search && !row.title.toLowerCase().includes(search)) return false;
+  if (historyFilters.member && !row.memberIds.includes(historyFilters.member))
+    return false;
+  if (historyFilters.category && row.category !== historyFilters.category)
+    return false;
+  if (historyFilters.month && monthOf(row.date) !== historyFilters.month)
+    return false;
+  return true;
+}
+
+// How many rows have this type? e.g. countType(rows, "Claim")
+function countType(rows, type) {
+  return rows.filter((row) => row.type === type).length;
+}
+
+function historyRowHtml(row) {
+  const badge = STATUS_BADGE[row.status] || "text-bg-secondary";
+  return `<tr>
+    <td>${formatDate(row.date)}</td><td>${row.type}</td><td>${escapeHtml(row.title)}</td>
+    <td>${escapeHtml(row.member)}</td><td>${escapeHtml(row.category)}</td>
+    <td class="fw-semibold">${formatMoney(row.amount)}</td>
+    <td><span class="badge ${badge}">${capitalise(row.status)}</span></td>
+  </tr>`;
+}
+
+function renderHistoryPage() {
+  const team = getTeam();
+  const members = team ? membersOf(team, true) : [];
+  const rows = team ? buildHistoryRows(team) : [];
+
+  setText("historyCurrentMonth", monthLabel(monthOf(today())));
+
+  // filter dropdowns
+  const months = [...new Set(rows.map((r) => monthOf(r.date)))]
+    .sort()
+    .reverse();
+  fillSelect(
+    "historyMemberFilter",
+    "All members",
+    members.map((m) => [m.id, m.name]),
+    historyFilters.member,
+  );
+  fillSelect(
+    "historyCategoryFilter",
+    "All categories",
+    pairs(CATEGORIES.concat(["Settlement"])),
+    historyFilters.category,
+  );
+  fillSelect(
+    "historyMonthFilter",
+    "All months",
+    months.map((m) => [m, monthLabel(m)]),
+    historyFilters.month,
+  );
+
+  // if a chosen option disappeared, the select reset itself - remember that
+  historyFilters.member = getEl("historyMemberFilter").value;
+  historyFilters.category = getEl("historyCategoryFilter").value;
+  historyFilters.month = getEl("historyMonthFilter").value;
+
+  const shown = rows.filter(historyRowMatches);
+
+  // summary cards
+  const uniqueMembers = new Set();
+  for (const row of shown) {
+    for (const id of row.memberIds) {
+      uniqueMembers.add(id);
+    }
+  }
+  setText("historyTotalActivities", shown.length);
+  setText("historyTotalExpenses", countType(shown, "Expense"));
+  setText("historyTotalPayments", countType(shown, "Payment"));
+  setText("historyTotalClaims", countType(shown, "Claim"));
+  setText("historyTotalMembers", uniqueMembers.size);
+
+  // table + pagination
+  const totalPages = Math.max(1, Math.ceil(shown.length / HISTORY_PAGE_SIZE));
+  if (historyPage > totalPages) historyPage = totalPages;
+  const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
+  const visible = shown.slice(start, start + HISTORY_PAGE_SIZE);
+
+  let tableRows = "";
+  for (const row of visible) {
+    tableRows += historyRowHtml(row);
+  }
+  getEl("historyTableBody").innerHTML = tableRows;
+  getEl("historyEmptyState").hidden = visible.length > 0;
+
+  if (shown.length > 0) {
+    setText(
+      "historyResultsCount",
+      "Showing " +
+        (start + 1) +
+        "–" +
+        (start + visible.length) +
+        " of " +
+        shown.length +
+        " activities",
+    );
+    setText("historyPageNumber", "Page " + historyPage + " of " + totalPages);
+  } else {
+    setText("historyResultsCount", "No activities to display");
+    setText("historyPageNumber", "—");
+  }
+  getEl("historyPrevPage").disabled = historyPage <= 1;
+  getEl("historyNextPage").disabled = historyPage >= totalPages;
+}
+
+// When a filter changes: save it, go back to page 1, redraw
+function historyFilterChanged(key) {
+  return function (event) {
+    historyFilters[key] = event.target.value;
+    historyPage = 1;
+    renderHistoryPage();
+  };
+}
+
+function startHistoryPage() {
+  getEl("historySearch").addEventListener("input", historyFilterChanged("q"));
+  getEl("historyMemberFilter").addEventListener(
+    "change",
+    historyFilterChanged("member"),
+  );
+  getEl("historyCategoryFilter").addEventListener(
+    "change",
+    historyFilterChanged("category"),
+  );
+  getEl("historyMonthFilter").addEventListener(
+    "change",
+    historyFilterChanged("month"),
+  );
+
+  getEl("historyPrevPage").addEventListener("click", function () {
+    historyPage--;
+    renderHistoryPage();
+  });
+  getEl("historyNextPage").addEventListener("click", function () {
+    historyPage++;
+    renderHistoryPage();
+  });
+  getEl("historyResetFilters").addEventListener("click", function () {
+    historyFilters.q = "";
+    historyFilters.member = "";
+    historyFilters.category = "";
+    historyFilters.month = "";
+    getEl("historySearch").value = "";
+    historyPage = 1;
+    renderHistoryPage();
+  });
+
+  // the top search box also searches this page
+  initPage(renderHistoryPage, function (text) {
+    historyFilters.q = text;
+    getEl("historySearch").value = text;
+    historyPage = 1;
+    renderHistoryPage();
+  });
+}
+
+// ---------- 16. "COMING SOON" PAGES (Recurring Bills, Settings) ----------
+
+function startComingSoonPage() {
+  const el = getEl("pageContent");
+  const title = el.dataset.title; // comes from data-title in the page's HTML
+  const icon = el.dataset.icon || "bi-hourglass-split";
+
+  initPage(function () {
+    el.innerHTML =
+      heading(escapeHtml(title)) +
+      `<div class="panel empty-state"><i class="bi ${escapeHtml(icon)}"></i><p>${escapeHtml(title)} is coming soon.</p></div>`;
+  });
+}
+
+// ---------- 17. START: which page are we on? ----------
+
+const pageName = location.pathname.split("/").pop(); // e.g. "expenses.html"
+
+if (pageName === "" || pageName === "index.html") startDashboard();
+else if (pageName === "expenses.html") startExpensesPage();
+else if (pageName === "balances.html") startBalancesPage();
+else if (pageName === "settle-up.html") startSettleUpPage();
+else if (pageName === "payments.html") startPaymentsPage();
+else if (pageName === "members.html") startMembersPage();
+else if (pageName === "history.html") startHistoryPage();
+else startComingSoonPage(); // recurring-bills.html and settings.html
