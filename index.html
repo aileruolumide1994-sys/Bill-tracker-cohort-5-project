@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="OfficeFlow - track shared office expenses, claims and petty cash."
+      content="OfficeFlow - track shared office expenses, claims."
     />
     <title>OfficeFlow - Team Finance Manager</title>
     <link
@@ -27,30 +27,30 @@
         class="offcanvas-lg offcanvas-start sidebar"
         tabindex="-1"
         id="sidebar"
-        aria-labelledby="sidebarTitle"
+        aria-label="Main navigation"
       >
-        <div class="offcanvas-header d-lg-none border-bottom">
-          <h5 class="offcanvas-title" id="sidebarTitle">OfficeFlow</h5>
-          <button
-            type="button"
-            class="btn-close"
-            data-bs-dismiss="offcanvas"
-            data-bs-target="#sidebar"
-            aria-label="Close menu"
-          ></button>
-        </div>
-
         <div class="offcanvas-body d-flex flex-column p-3">
-          <a
-            href="index.html"
-            class="d-flex align-items-center gap-2 text-decoration-none text-dark border-bottom pb-3 mb-3"
+          <div
+            class="sidebar-brand d-flex align-items-center gap-2 border-bottom pb-3 mb-3"
           >
-            <span class="brand-icon"><i class="bi bi-wallet2"></i></span>
-            <span>
-              <strong class="d-block">OfficeFlow</strong>
-              <small class="text-secondary">Team Finance Manager</small>
-            </span>
-          </a>
+            <a
+              href="index.html"
+              class="d-flex align-items-center gap-2 text-decoration-none text-dark"
+            >
+              <span class="brand-icon"><i class="bi bi-wallet2"></i></span>
+              <span>
+                <strong class="d-block">OfficeFlow</strong>
+                <small class="text-secondary"> Finance Manager</small>
+              </span>
+            </a>
+            <button
+              type="button"
+              class="btn-close d-lg-none"
+              data-bs-dismiss="offcanvas"
+              data-bs-target="#sidebar"
+              aria-label="Close menu"
+            ></button>
+          </div>
 
           <nav
             class="nav nav-pills flex-column gap-1"
@@ -155,7 +155,7 @@
             <div class="d-flex align-items-center gap-2">
               <span class="badge rounded-pill balance-badge">
                 <i class="bi bi-check-circle me-1"></i>
-                <span class="balance-text">System Balanced (₦0.00)</span>
+                <span class="balance-text"></span>
               </span>
               <button
                 type="button"
@@ -178,7 +178,7 @@
           <section class="overview-dashboard">
             <!-- PAGE CONTENT -->
             <header
-              class="container-fluid p-4 d-flex justify-content-between align-items-center gap-3"
+              class="container-fluid p-4 d-flex justify-content-between align-items-center gap-3 flex-wrap"
             >
               <div class="overview-copy">
                 <div class="d-flex align-items-center gap-3 flex-wrap">
@@ -277,7 +277,7 @@
               </article>
 
               <!-- Pending claims -->
-              <!-- <article class="summary-card">
+              <article class="summary-card">
                 <div class="card-heading">
                   <span>PENDING CLAIMS</span>
                   <span class="summary-icon orange-icon">
@@ -294,10 +294,10 @@
                   <span>Claims awaiting review</span>
                   <strong id="pendingClaimsCount">0</strong>
                 </div>
-              </article> -->
+              </article>
 
               <!-- Available petty cash -->
-              <article class="summary-card">
+              <!-- <article class="summary-card">
                 <div class="card-heading">
                   <span>AVAILABLE PETTY<br />CASH</span>
                   <span class="summary-icon green-icon">
@@ -312,7 +312,7 @@
                   <span>Custodian</span>
                   <strong id="pettyCashCustodian">Not assigned</strong>
                 </div>
-              </article>
+              </article> -->
 
               <!-- Members to settle -->
               <article class="summary-card">

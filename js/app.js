@@ -197,7 +197,7 @@ function allocate(total, weights) {
   }
   if (weightSum === 0) return weights.map(() => 0);
 
-  // Step 1: everyone gets their share rounded DOWN
+  // Everyone gets their share rounded DOWN
   const parts = [];
   let given = 0;
   for (let i = 0; i < weights.length; i++) {
@@ -207,9 +207,34 @@ function allocate(total, weights) {
     given = given + rounded;
   }
 
-  // Step 2: give the leftover kobo, one by one, to the biggest remainders
+  // Give the leftover kobo, one by one, to the biggest remainders
+  // let leftover = total - given;
+  // const sorted = parts.slice().sort((a, b) => b.remainder - a.remainder);
+  // for (const part of sorted) {
+  //   if (leftover > 0) {
+  //     part.amount = part.amount + 1;
+  //     leftover = leftover - 1;
+  //   }
+  // }
+
+  // const sorted = parts.slice().sort((a, b) => {
+  //   if (b.remainder === a.remainder) {
+  //     return Math.random() - 0.5;
+  //   }
+  //   return b.remainder - a.remainder;
+  // });
+
   let leftover = total - given;
-  const sorted = parts.slice().sort((a, b) => b.remainder - a.remainder);
+
+  // Create a safe copy to sort so we don't mess up the original array order
+  const sorted = parts.slice().sort((a, b) => {
+    // If the remainders are exactly equal, flip a coin to decide who gets it
+    if (b.remainder === a.remainder) {
+      return Math.random() - 0.5;
+    }
+    return b.remainder - a.remainder;
+  });
+
   for (const part of sorted) {
     if (leftover > 0) {
       part.amount = part.amount + 1;
@@ -397,7 +422,7 @@ let modal = null;
 let submitHandler = null; // the function to run when OK is clicked
 
 function buildModal() {
-  if (modal) return; // already built
+  if (modal) return;
   document.body.insertAdjacentHTML(
     "beforeend",
     `
@@ -571,9 +596,7 @@ function renderHeader() {
   const badge = document.querySelector(".balance-badge");
   badge.classList.toggle("text-bg-danger", imbalance !== 0);
   badge.querySelector(".balance-text").textContent =
-    imbalance === 0
-      ? "System Balanced (₦0.00)"
-      : "Imbalance " + formatMoney(imbalance);
+    imbalance === 0 ? "" : "Imbalance " + formatMoney(imbalance);
 
   // the round avatar shows the first letter of the user's name
   const userName = state.data.settings.userName || "?";
@@ -1239,7 +1262,6 @@ function renderDashboard() {
   const members = team ? membersOf(team, true) : [];
   const allExpenses = team ? expensesOf(team) : [];
   const approved = allExpenses.filter((e) => e.status === "approved");
-  const pending = allExpenses.filter((e) => e.status === "pending");
 
   // only the expenses in the month we are viewing
   let inView = approved;
@@ -1275,15 +1297,6 @@ function renderDashboard() {
   setText("spendingPeriod", periodText);
   showSpendingChange(approved, periodTotal);
 
-  setText("pendingClaims", formatMoney(sumAmounts(pending)));
-  setText("pendingClaimsCount", pending.length);
-  setText("availablePettyCash", formatMoney(team ? team.pettyCash : 0));
-
-  const custodian = team
-    ? members.find((m) => m.id === team.custodianId)
-    : null;
-  setText("pettyCashCustodian", custodian ? custodian.name : "Not assigned");
-
   let membersToSettle = 0;
   let totalDebt = 0;
   let imbalance = 0;
@@ -1296,7 +1309,6 @@ function renderDashboard() {
   setText("settlementBalance", formatMoney(totalDebt) + " to balance");
 
   // audit banner (firstChild is the text before the little dot)
-  setText("auditBalance", formatMoney(imbalance));
   getEl("auditTitle").firstChild.textContent =
     imbalance === 0 ? "Ledger balanced " : "Ledger out of balance ";
 

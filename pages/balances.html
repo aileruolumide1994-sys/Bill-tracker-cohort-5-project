@@ -27,30 +27,30 @@
         class="offcanvas-lg offcanvas-start sidebar"
         tabindex="-1"
         id="sidebar"
-        aria-labelledby="sidebarTitle"
+        aria-label="Main navigation"
       >
-        <div class="offcanvas-header d-lg-none border-bottom">
-          <h5 class="offcanvas-title" id="sidebarTitle">OfficeFlow</h5>
-          <button
-            type="button"
-            class="btn-close"
-            data-bs-dismiss="offcanvas"
-            data-bs-target="#sidebar"
-            aria-label="Close menu"
-          ></button>
-        </div>
-
         <div class="offcanvas-body d-flex flex-column p-3">
-          <a
-            href="../index.html"
-            class="d-flex align-items-center gap-2 text-decoration-none text-dark border-bottom pb-3 mb-3"
+          <div
+            class="sidebar-brand d-flex align-items-center gap-2 border-bottom pb-3 mb-3"
           >
-            <span class="brand-icon"><i class="bi bi-wallet2"></i></span>
-            <span>
-              <strong class="d-block">OfficeFlow</strong>
-              <small class="text-secondary">Team Finance Manager</small>
-            </span>
-          </a>
+            <a
+              href="../index.html"
+              class="d-flex align-items-center gap-2 text-decoration-none text-dark"
+            >
+              <span class="brand-icon"><i class="bi bi-wallet2"></i></span>
+              <span>
+                <strong class="d-block">OfficeFlow</strong>
+                <small class="text-secondary">Team Finance Manager</small>
+              </span>
+            </a>
+            <button
+              type="button"
+              class="btn-close d-lg-none"
+              data-bs-dismiss="offcanvas"
+              data-bs-target="#sidebar"
+              aria-label="Close menu"
+            ></button>
+          </div>
 
           <nav
             class="nav nav-pills flex-column gap-1"

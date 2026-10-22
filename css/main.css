@@ -192,7 +192,18 @@ body {
 /* Tablet and mobile */
 @media (max-width: 991.98px) {
   .sidebar {
+    --bs-offcanvas-width: 70vw;
+    width: 50vw;
     border-right: none;
+  }
+
+  .sidebar-brand .btn-close {
+    margin-left: auto;
+  }
+
+  .offcanvas-backdrop.show {
+    background-color: #000;
+    opacity: 0.65;
   }
 
   .search-form {
